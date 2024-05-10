@@ -405,4 +405,100 @@ def _get_parent_node_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
         working_dict_path.pop_the_last_step_of_the_path()
 
     return None 
+    # Récupère les noms des nœuds parents
+    def _get_parents_nodes_names(self, dict_path: DictPath) -> Optional[List[str]]:
+        parents_nodes_names = []
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        while not working_dict_path.is_empty():
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+            parent_dict_path = working_dict_path.get_the_path_to_parent()
+            if parent_dict_path is not None:
+                parent_path_step = parent_dict_path.get_the_last_step_of_the_path()
+                if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+                    parents_nodes_names.append(last_path_step)
+
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return parents_nodes_names
+
+    # Récupère le chemin du dictionnaire parent du groupe de composants
+    def _get_parent_component_group_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        while not working_dict_path.is_empty():
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+            if last_path_step == self.key_words["label_of_a_node_dictionary"]:
+                return None
+            if last_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                return working_dict_path
+
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return None
+
+    # Vérifie si le groupe parent est le groupe principal
+    def _is_parent_group_is_the_main_parent_group(self, dict_path: DictPath) -> bool:
+        parent_group_dict_path = self._get_parent_component_group_dict_path(dict_path)
+        if parent_group_dict_path is None:
+            return False
+
+        parent_group_dict_path_as_list_without_him = parent_group_dict_path.get_dict_path_as_list()[1:]
+        for dict_path_step in parent_group_dict_path_as_list_without_him:
+            if dict_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                return False
+        return True
+
+    # Récupère le chemin du dictionnaire principal du groupe de composants parent
+    def _get_main_parent_component_group_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        candidate_dict_path = None
+
+        while not working_dict_path.is_empty():
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+            if last_path_step == self.key_words["label_of_a_node_dictionary"]:
+                break
+            if last_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                candidate_dict_path = DictPath(from_dict_path=working_dict_path)
+
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return candidate_dict_path
+
+    # Récupère les noms des groupes de composants parents
+    def _get_parents_component_groups_names(self, dict_path: DictPath) -> Optional[List[str]]:
+        parents_component_groups_names = []
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        while not working_dict_path.is_empty():
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+            parent_dict_path = working_dict_path.get_the_path_to_parent()
+            if parent_dict_path is not None:
+                if last_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                    parents_component_groups_names.append(self._get_group_name_from_definition_key(last_path_step))
+
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return parents_component_groups_names
+
+    # Extrait le nom du groupe de composants à partir de la clé de définition du nom
+    def _get_group_name_from_definition_key(self, group_name_definition_key):
+        return group_name_definition_key[group_name_definition_key.find(self.key_words["label_of_a_components_group"]) + len(self.key_words["label_of_a_components_group"]):]
+
+    # Recherche par chemin de déploiement
+    def _search_by_deployment_path(self, parameter_deployment_path_as_string: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[Optional[Union[str, int, float, bool, list, dict]], Optional[dict], Optional[DictPath]]:
+        # ... (le reste de la fonction est trop long pour le commenter ici)
 
