@@ -502,3 +502,58 @@ def _get_parent_node_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
     def _search_by_deployment_path(self, parameter_deployment_path_as_string: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[Optional[Union[str, int, float, bool, list, dict]], Optional[dict], Optional[DictPath]]:
         # ... (le reste de la fonction est trop long pour le commenter ici)
 
+    # Recherche depuis ici jusqu'au sommet de la valeur du paramètre
+    @staticmethod
+    def _search_from_here_to_the_top_of_the_parameter_value(parameter: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[Optional[Union[str, int, float, bool, list, dict]], Optional[dict], Optional[DictPath]]:
+        def search_parameter_value_in_path_step(dict_path_to_check: DictPath, last_key_checked: str = None) -> Tuple[Optional[Union[str, int, float, bool, list, dict]], Optional[dict], Optional[DictPath]]:
+            path_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path_to_check)
+            if not isinstance(path_value, dict):
+                return None, None, None
+
+            param_value = path_value.get(parameter, None)
+            if param_value is not None:
+                return param_value, path_value, dict_path_to_check
+
+            key_list = list(path_value.keys())
+            if last_key_checked is None or last_key_checked not in path_value.keys():
+                pass
+            else:
+                key_list = key_list[:key_list.index(last_key_checked)]
+                key_list.reverse()
+
+            for key in key_list:
+                param_value, param_parent_dict, dict_path_to_param_parent_dict = search_parameter_value_in_path_step(dict_path_to_check.get_the_path_to_a_following_step(key))
+                if param_value is not None:
+                    return param_value, param_parent_dict, dict_path_to_param_parent_dict
+
+            return None, None, None
+
+        working_dict_path = DictPath(from_dict_path=dict_path)
+        last_dict_key_checked = None
+        while not working_dict_path.is_empty():
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict = search_parameter_value_in_path_step(working_dict_path, last_dict_key_checked)
+            if parameter_value is not None:
+                return parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict
+
+            last_dict_key_checked = working_dict_path.pop_the_last_step_of_the_path()
+        else:
+            parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict = search_parameter_value_in_path_step(working_dict_path, last_dict_key_checked)
+            if parameter_value is not None:
+                return parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict
+
+        return None, None, None
+
+
+# Classe qui nettoie la description du déploiement
+class DeploymentDescriptionCleaner(DeploymentDescriptionParser):
+
+    def clean_deployment_description_dict(self, deployment_description_dict: dict) -> NoReturn:
+        self.parse_deployment_description_dict(deployment_description_dict)
+
+    # Traitement de la clé au début
+    def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
+        # ... (suite du code)
+
