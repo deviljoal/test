@@ -557,3 +557,87 @@ class DeploymentDescriptionCleaner(DeploymentDescriptionParser):
     def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
         # ... (suite du code)
 
+def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
+    # Fonction appelée lors du traitement du début d'une nouvelle clé
+    raise UserWarning(f"'_process_key_starting' function must be overridden")
+
+def _process_key_ending(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+    # Fonction appelée lors du traitement de la fin d'une clé
+    raise UserWarning(f"'_process_key_ending' function must be overridden")
+
+def _process_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+    # Fonction appelée lors du traitement de la valeur finale
+    raise UserWarning(f"'_process_final_value' function must be overridden")
+
+def _deep_update(self, original_dict: dict, update_dict: dict) -> dict:
+    # Fonction pour fusionner récursivement deux dictionnaires
+    for key, value in update_dict.items():
+        if isinstance(value, dict):
+            original_dict[key] = self._deep_update(original_dict.setdefault(key, {}), value)
+        else:
+            original_dict[key] = value
+    # TODO: List ?
+    return original_dict
+
+@staticmethod
+def _get_dict_from_json_file(json_file_path: Path) -> dict:
+    # Fonction pour charger un fichier JSON en tant que dictionnaire
+    try:
+        json_file_lines = []
+        with json_file_path.open("r") as json_file:
+            for line in json_file.readlines():
+                if not line.lstrip().startswith("//"):
+                    if "    //" in line:
+                        json_file_lines.append(line[:line.find("    //")])
+                    else:
+                        json_file_lines.append(line)
+            file_content_as_dict = json.loads("\n".join(json_file_lines))
+    except (OSError, json.JSONDecodeError) as e:
+        raise UserWarning(f"Load json from file '{json_file_path}' failed: {e}")
+
+    if not isinstance(file_content_as_dict, dict):
+        raise UserWarning(f"Json from file '{json_file_path}' is not a dict ({file_content_as_dict})")
+
+    return file_content_as_dict
+
+@staticmethod
+def _write_dict_to_json_file(input_dict: dict, output_json_file_path: Path) -> NoReturn:
+    # Fonction pour écrire un dictionnaire dans un fichier JSON
+    try:
+        with output_json_file_path.open("w", newline="\n") as json_file:
+            json.dump(input_dict, json_file, indent=4)
+    except (OSError, TypeError, ValueError, OverflowError) as e:
+        print(f"Write json to file '{output_json_file_path}' failed: ", e)
+        raise UserWarning(f"Write json file '{output_json_file_path}' from dict failed: {e}")
+
+def _get_deployment_path(self, dict_path: DictPath) -> List[str]:
+    # Fonction pour obtenir le chemin du déploiement à partir du chemin du dictionnaire
+    deployment_path = []
+    for dict_path_step in dict_path.get_dict_path_as_list():
+        if dict_path_step in (self.key_words["label_of_a_node_dictionary"], self.key_words["label_of_a_component_dictionary"], self.key_words["label_of_a_component_env_var_dictionary"]):
+            continue
+        if dict_path_step.startswith(self.key_words["label_of_a_components_group"]):
+            deployment_path.append(self._get_group_name_from_definition_key(dict_path_step))
+            continue
+        deployment_path.append(dict_path_step)
+    deployment_path.reverse()
+    return deployment_path
+
+def _get_parent_node_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
+    # Fonction pour obtenir le chemin du dictionnaire du nœud parent à partir du chemin du dictionnaire
+    working_dict_path = DictPath(from_dict_path=dict_path)
+
+    while not working_dict_path.is_empty():
+        while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        parent_dict_path = working_dict_path.get_the_path_to_parent()
+        if parent_dict_path is not None:
+            parent_path_step = parent_dict_path.get_the_last_step_of_the_path()
+            if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+                return working_dict_path
+
+        working_dict_path.pop_the_last_step_of_the_path()
+
+    return None
+
