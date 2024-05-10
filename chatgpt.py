@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Importation des modules nécessaires
 from __future__ import annotations
+
 import argparse
 import copy
 import hashlib
@@ -22,24 +22,24 @@ from distutils.dir_util import copy_tree
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, NoReturn, Union, Callable, Any
 
-# Fichier de configuration du DSL
+# Chemin du fichier de journal DSL
 dsl_log_file = "dsl.log4j.xml"
 
-# Fonction pour adapter les arguments de commande lors de l'utilisation de Bash sur Windows
+# Fonction pour adapter les arguments de la commande lors de l'utilisation de Bash sur Windows
 def adapt_the_command_arguments_when_using_bash_on_windows(command_arguments):
     command_arguments_to_use = command_arguments[:]
     if platform.system() == "Windows":
         command_arguments_to_use = ["bash.exe", "-c", " ".join(command_arguments)]
     return command_arguments_to_use
 
-# Fonction pour exécuter un sous-processus
+# Fonction pour exécuter un processus subprocess
 def run_subprocess(log_file_path: Path,
                    arguments: Union[list, str],
                    *subprocess_args,
                    environment_variables: dict = None,
                    current_working_directory: Path = None,
                    **subprocess_kwargs) -> subprocess.Popen:
-    # Ouverture du processus en tant que sous-processus avec les arguments donnés
+    # Ouverture du processus subprocess
     with subprocess.Popen(arguments, *subprocess_args,
                           env=environment_variables,
                           cwd=current_working_directory,
@@ -48,25 +48,23 @@ def run_subprocess(log_file_path: Path,
                           stderr=subprocess.STDOUT,
                           bufsize=1,
                           **subprocess_kwargs) as running_process, log_file_path.open("w") as log_file:
-        # Lecture de la sortie du processus ligne par ligne
+        # Boucle pour lire la sortie du processus
         for line in running_process.stdout:
-            # Ajout d'un horodatage et écriture de la ligne dans le fichier de journal
             line = datetime.now().strftime("%H:%M:%S.%f")[:-3] + "- " + line
             print(line[:-1])
             log_file.write(line)
             log_file.flush()
     return running_process
 
-# Fonction pour exécuter un sous-processus en détaché
+# Fonction pour exécuter un processus subprocess en détaché
 def run_detach_subprocess(log_file_path: Path,
                           arguments: list,
                           environment_variables: dict = None,
                           current_working_directory: Path = None) -> subprocess.Popen:
-    # Fonction interne pour normaliser les chemins de fichier
     def norm_path(file_path: Path) -> str:
         return str(file_path).replace('\\', '/')
 
-    # Construction de la commande Python pour lancer le sous-processus
+    # Commande Python pour exécuter un script en détaché
     python_command_string = f"""
 import subprocess
 import platform
@@ -87,32 +85,29 @@ launch_subprocess({arguments}, {environment_variables}, "{norm_path(current_work
 
     python_command_arguments = ["python", "-c", python_command_string]
 
-    # Exécution du processus détaché en fonction de la plateforme
+    # Exécution du script Python pour démarrer le processus en détaché
     if platform.system() == "Windows":
         process = subprocess.Popen(python_command_arguments, cwd=current_working_directory.parent, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
     else:
-        process = subprocess.Popen(python_command_arguments, cwd=current_working_directory.parent, start_new_session=True)
+        process = subprocess.Popen(python_command_arguments, cwd=current_working_directory.parent, start_new_session=True)    # Try adding this in case of terminal problems: , stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
     return process
 
 # Classe représentant un chemin dans un dictionnaire
 class DictPath:
 
-    # Méthode de classe pour vérifier si une étape de chemin est un index
     @classmethod
     def is_a_path_step_as_index(cls, path_step):
         if isinstance(path_step, int) and path_step >= 0:
             return True
         return False
 
-    # Méthode de classe pour vérifier si une étape de chemin est une clé
     @classmethod
     def is_a_path_step_as_key(cls, path_step):
         if isinstance(path_step, str):
             return True
         return False
 
-    # Initialisation de l'objet DictPath
     def __init__(self, from_dict_path: DictPath = None, from_dict_path_as_list: Optional[List[str]] = None):
         if from_dict_path_as_list is not None:
             self.dictPath = from_dict_path_as_list[:]
@@ -121,282 +116,293 @@ class DictPath:
         else:
             self.dictPath = from_dict_path.get_dict_path_as_list()
 
-    # Représentation sous forme de chaîne de caractères de l'objet DictPath
     def __str__(self):
         return "->".join([str(x) for x in self.dictPath])
 
-    # Méthode pour obtenir le chemin sous forme de liste
     def get_dict_path_as_list(self):
         return self.dictPath[:]
 
-    # Méthode pour vérifier si le chemin est vide
     def is_empty(self):
         return len(self.dictPath) == 0
 
-    # Méthode pour ajouter une étape au chemin
     def add_a_step_to_the_path(self, path_step):
         if not self.is_a_path_step_as_key(path_step) and not self.is_a_path_step_as_index(path_step):
             raise UserWarning(f"Unexpected path step type (expected string or positive int)")
         self.dictPath = [path_step] + self.dictPath
 
-    # Méthode pour obtenir la dernière étape du chemin
     def get_the_last_step_of_the_path(self):
         if self.is_empty():
             return None
         return self.dictPath[0]
 
-    # Méthode pour obtenir et supprimer la dernière étape du chemin
-    def get_and_remove_the_last_step_of_the_path(self):
+    def get_the_path_to_parent(self):
         if self.is_empty():
             return None
-        last_step = self.dictPath[0]
-        del self.dictPath[0]
-        return last_step
-
-    # Méthode pour obtenir une sous-chaîne du chemin
-    def get_subpath_as_dict_path(self):
         return DictPath(from_dict_path_as_list=self.dictPath[1:])
+
+    def get_the_path_to_a_following_step(self, following_path_step: Union[str, int]) -> NoReturn:
+        new_dict_path = DictPath(from_dict_path=self)
+        new_dict_path.add_a_step_to_the_path(following_path_step)
+        return new_dict_path
+
+    def pop_the_last_step_of_the_path(self):
+        return self.dictPath.pop(0)
+
+    def pop_the_first_step_of_the_path(self):
+        return self.dictPath.pop()
 
 # Classe pour manipuler un dictionnaire basé sur un chemin
 class PathBasedDictionary:
 
-    # Initialisation de l'objet PathBasedDictionary
-    def __init__(self, dictionary_to_use: Optional[dict] = None):
-        if dictionary_to_use is None:
-            self.pathBasedDictionary = {}
+    def __init__(self, root_dict: dict):
+        self.root_dict = root_dict
+
+    def get_the_value_pointed_by_a_dict_path(self, dict_path: DictPath, default_value: Any = "--raise--") -> Any:
+        if dict_path.is_empty():
+            return self.root_dict
+
+        working_dict_path = DictPath(from_dict_path=dict_path)
+        working_value = self.root_dict
+        while not working_dict_path.is_empty():
+            key_or_index = working_dict_path.pop_the_last_step_of_the_path()
+
+            if isinstance(working_value, dict):
+                if not DictPath.is_a_path_step_as_key(key_or_index):
+                    raise UserWarning(f"The path '{working_dict_path}' is not a key in the parent dict")
+                working_value = working_value.get(key_or_index, None)
+                if working_value is None:
+                    if default_value == "--raise--":
+                        raise UserWarning(f"The value associated to the path '{working_dict_path}' is not found")
+                    else:
+                        working_value = default_value
+            elif isinstance(working_value, list):
+                if not DictPath.is_a_path_step_as_index(key_or_index):
+                    raise UserWarning(f"The path '{working_dict_path}' is not an index in the parent list")
+                try:
+                    working_value = working_value[key_or_index]
+                except IndexError:
+                    raise UserWarning(f"The value associated to the path '{working_dict_path}' is not found")
+
+        return working_value
+
+    def set_the_value_pointed_by_a_dict_path(self, value: Any, dict_path: DictPath) -> NoReturn:
+        if dict_path.is_empty():
+            return self.root_dict
+
+        key_or_index = dict_path.get_the_last_step_of_the_path()
+        key_parent = dict_path.get_the_path_to_parent()
+        parent_dict_or_list = self.get_the_value_pointed_by_a_dict_path(key_parent)
+        try:
+            parent_dict_or_list[key_or_index] = value
+        except (TypeError, IndexError, KeyError) as e:
+            raise UserWarning(f"Set the value associated to the path '{dict_path}' failed: {e}")
+
+    def replace_the_last_key_given_by_a_dict_path(self, dict_path: DictPath, new_last_key: str, new_pointed_value: Optional[Any] = None) -> NoReturn:
+        key = dict_path.get_the_last_step_of_the_path()
+        if not DictPath.is_a_path_step_as_key(key):
+            raise UserWarning(f"The path '{dict_path}' last step is not a key")
+        parent_dict = self.get_the_value_pointed_by_a_dict_path(dict_path.get_the_path_to_parent())
+        if not isinstance(parent_dict, dict):
+            raise UserWarning(f"The path '{dict_path}' last step parent is not a dict")
+
+        if new_pointed_value is not None:
+            value = new_pointed_value
         else:
-            self.pathBasedDictionary = dictionary_to_use
+            value = self.get_the_value_pointed_by_a_dict_path(dict_path)
 
-    # Méthode pour obtenir la valeur d'un chemin dans le dictionnaire
-    def get_the_value_of_a_path(self, path_to_use: DictPath) -> Any:
-        path = path_to_use.get_dict_path_as_list()
-        current_dict = self.pathBasedDictionary
-        while len(path) > 0:
-            current_step = path.pop()
-            if DictPath.is_a_path_step_as_index(current_step):
-                current_dict = current_dict[int(current_step)]
-            elif DictPath.is_a_path_step_as_key(current_step):
-                current_dict = current_dict[current_step]
-            else:
-                raise UserWarning(f"Unexpected path step type (expected string or positive int)")
-        return current_dict
+        key_position = list(parent_dict.keys()).index(key)
+        parent_items = list(parent_dict.items())
+        parent_items.insert(key_position, (new_last_key, value))
+        new_parent_dict = dict(parent_items)
+        new_parent_dict.pop(key, None)
 
-    # Méthode pour définir la valeur d'un chemin dans le dictionnaire
-    def set_the_value_of_a_path(self, path_to_use: DictPath, value_to_set: Any) -> NoReturn:
-        path = path_to_use.get_dict_path_as_list()
-        current_dict = self.pathBasedDictionary
-        while len(path) > 1:
-            current_step = path.pop()
-            if DictPath.is_a_path_step_as_index(current_step):
-                current_dict = current_dict[int(current_step)]
-            elif DictPath.is_a_path_step_as_key(current_step):
-                current_dict = current_dict[current_step]
-            else:
-                raise UserWarning(f"Unexpected path step type (expected string or positive int)")
-        last_step = path.pop()
-        if DictPath.is_a_path_step_as_index(last_step):
-            current_dict[int(last_step)] = value_to_set
-        elif DictPath.is_a_path_step_as_key(last_step):
-            current_dict[last_step] = value_to_set
-        else:
-            raise UserWarning(f"Unexpected path step type (expected string or positive int)")
+        parent_dict.clear()
+        parent_dict.update(new_parent_dict)
 
-# Classe utilitaire pour analyser les dictionnaires avec des fonctions de rappel pour traiter les clés et les valeurs
+    def delete_the_last_key_given_by_a_dict_path(self, dict_path: DictPath) -> NoReturn:
+        key = dict_path.get_the_last_step_of_the_path()
+        if not DictPath.is_a_path_step_as_key(key):
+            raise UserWarning(f"The path '{dict_path}' last step is not a key")
+        parent_dict = self.get_the_value_pointed_by_a_dict_path(dict_path.get_the_path_to_parent())
+        if not isinstance(parent_dict, dict):
+            raise UserWarning(f"The path '{dict_path}' last step parent is not a dict")
+
+        parent_dict.pop(key, None)
+
+# Classe pour parser un dictionnaire
 class DictionaryParser:
+    IGNORE_THE_KEY = "--ignore-the-key--"
+    DELETE_THE_KEY = "--delete-the-key--"
 
-    # Initialisation de l'objet DictionaryParser
-    def __init__(self,
-                 dictionary_to_parse: dict,
-                 on_key_encounter: Callable[[str, List[DictPath]], Union[str, None]],
-                 on_value_encounter: Callable[[Any, List[DictPath]], Union[Any, None]],
-                 dictionary_to_use: Optional[Dict[str, Any]] = None):
-        self.dictionaryParser = dictionary_to_use
-        self.parse_dictionary(dictionary_to_parse, on_key_encounter, on_value_encounter)
+    def __init__(self, callback_on_key_analysis_starting: Callable[[str, DictPath, PathBasedDictionary], Optional[str]],
+                 callback_on_key_analysis_ending: Callable[[str, DictPath, PathBasedDictionary], NoReturn],
+                 callback_on_the_value_at_the_end_of_an_analyzed_path: Callable[[DictPath, PathBasedDictionary], bool]):
 
-    # Méthode pour analyser le dictionnaire
-    def parse_dictionary(self,
-                         dictionary_to_parse: dict,
-                         on_key_encounter: Callable[[str, List[DictPath]], Union[str, None]],
-                         on_value_encounter: Callable[[Any, List[DictPath]], Union[Any, None]],
-                         current_path: List[DictPath] = None) -> NoReturn:
-        if current_path is None:
-            current_path = []
-        for key, value in dictionary_to_parse.items():
-            # Création d'un nouveau chemin pour cette étape de clé
-            current_path.append(DictPath(from_dict_path=current_path[-1] if len(current_path) > 0 else None))
-            # Application de la fonction de rappel pour la clé
-            key_to_use = on_key_encounter(key, current_path)
-            if key_to_use is None:
-                key_to_use = key
-            # Application de la fonction de rappel pour la valeur
-            value_to_use = on_value_encounter(value, current_path)
-            if value_to_use is None:
-                value_to_use = value
-            # Traitement récursif si la valeur est un dictionnaire
-            if isinstance(value_to_use, dict):
-                self.parse_dictionary(value_to_use, on_key_encounter, on_value_encounter, current_path)
-            # Retrait du chemin ajouté pour cette étape de clé
-            current_path.pop()
+        self.callback_on_key_analysis_starting = callback_on_key_analysis_starting
+        self.callback_on_key_analysis_ending = callback_on_key_analysis_ending
+        self.callback_on_the_value_at_the_end_of_an_analyzed_ = callback_on_the_value_at_the_end_of_an_analyzed_path
 
-# Classe pour analyser la description du déploiement
+    def parse_dict(self, dict_to_parse: dict):
+        self._parse_path_base_dict(PathBasedDictionary(dict_to_parse))
+
+    def _parse_path_base_dict(self, path_base_dict: PathBasedDictionary, dict_path: DictPath = None) -> NoReturn:
+        if dict_path is None:
+            dict_path = DictPath()
+
+        dict_path_value = path_base_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+
+        if isinstance(dict_path_value, list):
+            for index, value in enumerate(dict_path_value):
+                new_dict_path = dict_path.get_the_path_to_a_following_step(index)
+                self._parse_path_base_dict(path_base_dict, new_dict_path)
+        elif isinstance(dict_path_value, dict):
+            analysed_dict_keys = list(dict_path_value.keys())
+            for key in analysed_dict_keys:
+                new_key = self.callback_on_key_analysis_starting(key, dict_path, path_base_dict)
+                if new_key == self.IGNORE_THE_KEY:
+                    continue
+                if new_key == self.DELETE_THE_KEY:
+                    path_base_dict.delete_the_last_key_given_by_a_dict_path(dict_path.get_the_path_to_a_following_step(key))
+                    continue
+                new_dict_path = dict_path.get_the_path_to_a_following_step(new_key)
+                self._parse_path_base_dict(path_base_dict, new_dict_path)
+                self.callback_on_key_analysis_ending(new_key, dict_path, path_base_dict)
+        else:
+            if self.callback_on_the_value_at_the_end_of_an_analyzed_(dict_path, path_base_dict):
+                self._parse_path_base_dict(path_base_dict, dict_path)
+
+# Classe pour parser la description du déploiement
 class DeploymentDescriptionParser:
 
-    # Initialisation de l'objet DeploymentDescriptionParser
-    def __init__(self,
-                 deployment_description_to_parse: dict,
-                 dictionary_to_use: Optional[Dict[str, Any]] = None):
-        self.deploymentDescriptionParser = dictionary_to_use
-        self.parse_deployment_description(deployment_description_to_parse)
+    key_words = {
+        "label_of_the_deployment_target": "--deployment-target--",
+        "label_of_is_present_test": "--isPresent--",
+        "label_of_the_gan_project_name": "--ganProjectName--",
+        "label_of_the_gan_version": "--ganVersion--",
+        "label_of_a_node_dictionary": "--nodesByName--",
+        "label_of_the_node_name": "--nodeName--",
+        "label_of_a_components_group": "--componentsGroup--",
+        "label_of_the_components_group_name": "--groupName--",
+        "label_of_a_component_dictionary": "--componentsByDescriptionName--",
+        "label_of_the_component_description_name": "--componentDescriptionName--",
+        "label_of_the_component_name": "--componentName--",
+        "label_of_a_component_env_var_dictionary": "--componentEnvironmentVariablesByName--",
+        "label_of_a_database_dictionary": "--database--",
+        "label_of_the_database_host": "--databaseHost--",
+        "label_of_the_database_port": "--databasePort--",
+        "label_of_a_template_definition": "--template--",
+        "label_of_a_template_use": "--fromTemplate--",
+        "label_of_an_just_to_differentiate_at_building_time": "--justToDifferentiateAtBuildingTime--",
+        "label_of_a_pel_section": "--pel--",
+        "label_of_a_pil_section": "--pil--",
+        "label_of_a_jaeger_section": "--jaeger--",
+    }
 
-    # Méthode pour analyser la description du déploiement
-    def parse_deployment_description(self,
-                                     deployment_description_to_parse: dict,
-                                     current_path: List[DictPath] = None) -> NoReturn:
-        if current_path is None:
-            current_path = []
-        # Définition des fonctions de rappel pour la clé et la valeur
-        def on_key_encounter(key: str, path: List[DictPath]) -> str:
-            return key
+def __init__(self):
+    # Initialise le parseur de dictionnaire pour l'analyse de la description de déploiement
+    self._dictionaryParser = DictionaryParser(self._process_key_starting, self._process_key_ending, self._process_final_value)
 
-        def on_value_encounter(value: Any, path: List[DictPath]) -> Any:
-            if isinstance(value, str):
-                # Nettoyage des chaînes de caractères pour supprimer les espaces inutiles
-                return value.strip()
-            return value
-        # Utilisation du DictionaryParser pour analyser la description du déploiement
-        DictionaryParser(deployment_description_to_parse,
-                         on_key_encounter,
-                         on_value_encounter,
-                         dictionary_to_use=self.deploymentDescriptionParser)
+def is_a_deployment_description_parser_key_word(self, key: str) -> bool:
+    # Vérifie si le mot clé donné est un mot clé du parseur de description de déploiement
+    key_words_in_key = [key_word in key for key_word in self.key_words.values()]
+    return True in key_words_in_key
 
-# Classe pour nettoyer la description du déploiement
-class DeploymentDescriptionCleaner:
+def is_a_correct_node_or_component_name(self, key: str) -> bool:
+    # Vérifie si le nom donné est un nom correct de nœud ou de composant
+    not_allowed_key_words = list(self.key_words.values())[:]
+    not_allowed_key_words.remove(self.key_words["label_of_is_present_test"])
+    not_allowed_key_words.remove(self.key_words["label_of_a_template_definition"])
+    not_allowed_key_words.remove(self.key_words["label_of_a_template_use"])
+    not_allowed_key_words.remove(self.key_words["label_of_an_just_to_differentiate_at_building_time"])
 
-    # Initialisation de l'objet DeploymentDescriptionCleaner
-    def __init__(self,
-                 deployment_description_to_clean: dict,
-                 dictionary_to_use: Optional[Dict[str, Any]] = None):
-        self.deploymentDescriptionCleaner = dictionary_to_use
-        self.clean_deployment_description(deployment_description_to_clean)
+    key_words_in_key = [key_word in key for key_word in not_allowed_key_words]
+    return not (True in key_words_in_key)
 
-    # Méthode pour nettoyer la description du déploiement
-    def clean_deployment_description(self,
-                                     deployment_description_to_clean: dict,
-                                     current_path: List[DictPath] = None) -> NoReturn:
-        if current_path is None:
-            current_path = []
-        # Définition des fonctions de rappel pour la clé et la valeur
-        def on_key_encounter(key: str, path: List[DictPath]) -> Union[str, None]:
-            if key == "logging":
-                # Ignorer la section de configuration du journal
-                return None
-            return key
+def parse_deployment_description_dict(self, deployment_dict: dict) -> NoReturn:
+    # Analyse la description de déploiement donnée sous forme de dictionnaire
+    self._dictionaryParser.parse_dict(deployment_dict)
 
-        def on_value_encounter(value: Any, path: List[DictPath]) -> Union[Any, None]:
-            if isinstance(value, dict):
-                # Nettoyer les dictionnaires imbriqués
-                return self.clean_deployment_description_recursively(value, path)
-            return value
-        # Utilisation du DictionaryParser pour nettoyer la description du déploiement
-        DictionaryParser(deployment_description_to_clean,
-                         on_key_encounter,
-                         on_value_encounter,
-                         dictionary_to_use=self.deploymentDescriptionCleaner)
+def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
+    # Méthode appelée au début de l'analyse d'une clé dans la description du déploiement
+    raise UserWarning(f"'_process_key_starting' function must be overridden")
 
-    # Méthode récursive pour nettoyer les dictionnaires imbriqués dans la description du déploiement
-    def clean_deployment_description_recursively(self,
-                                                 deployment_description_to_clean: dict,
-                                                 current_path: List[DictPath]) -> dict:
-        cleaned_description = {}
-        for key, value in deployment_description_to_clean.items():
-            current_path.append(DictPath(from_dict_path=current_path[-1] if len(current_path) > 0 else None))
-            # Ignorer les sections de configuration du journal
-            if key != "logging":
-                if isinstance(value, dict):
-                    cleaned_description[key] = self.clean_deployment_description_recursively(value, current_path)
-                else:
-                    cleaned_description[key] = value
-            current_path.pop()
-        return cleaned_description
+def _process_key_ending(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+    # Méthode appelée à la fin de l'analyse d'une clé dans la description du déploiement
+    raise UserWarning(f"'_process_key_ending' function must be overridden")
 
-# Fonction pour extraire un fichier d'archive tar.gz
-def extract_a_tar_gz_archive(archive_path: Path, extraction_directory: Path):
-    with tarfile.open(archive_path, "r:gz") as tar:
-        tar.extractall(path=extraction_directory)
+def _process_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+    # Méthode appelée lorsqu'une valeur finale est atteinte dans la description du déploiement
+    raise UserWarning(f"'_process_final_value' function must be overridden")
 
-# Fonction pour valider un chemin de fichier
-def validate_a_file_path(file_path: str) -> str:
-    if os.path.isfile(file_path):
-        return file_path
-    raise FileNotFoundError(f"File not found at {file_path}")
+def _deep_update(self, original_dict: dict, update_dict: dict) -> dict:
+    # Effectue une mise à jour récursive d'un dictionnaire avec les clés et les valeurs d'un autre dictionnaire
+    for key, value in update_dict.items():
+        if isinstance(value, dict):
+            original_dict[key] = self._deep_update(original_dict.setdefault(key, {}), value)
+        else:
+            original_dict[key] = value
+    # TODO: List ?
+    return original_dict
 
-# Fonction pour valider un chemin de répertoire
-def validate_a_directory_path(directory_path: str) -> str:
-    if os.path.isdir(directory_path):
-        return directory_path
-    raise NotADirectoryError(f"Directory not found at {directory_path}")
+@staticmethod
+def _get_dict_from_json_file(json_file_path: Path) -> dict:
+    # Lit un fichier JSON à partir d'un chemin de fichier et renvoie son contenu sous forme de dictionnaire Python
+    try:
+        json_file_lines = []
+        with json_file_path.open("r") as json_file:
+            for line in json_file.readlines():
+                if not line.lstrip().startswith("//"):
+                    if "    //" in line:
+                        json_file_lines.append(line[:line.find("    //")])
+                    else:
+                        json_file_lines.append(line)
+            file_content_as_dict = json.loads("\n".join(json_file_lines))
+    except (OSError, json.JSONDecodeError) as e:
+        raise UserWarning(f"Load json from file '{json_file_path}' failed: {e}")
 
-# Fonction pour valider un chemin de répertoire et le créer s'il n'existe pas
-def validate_and_create_a_directory_path(directory_path: str) -> str:
-    if not os.path.exists(directory_path):
-        os.makedirs(directory_path)
-    return directory_path
+    if not isinstance(file_content_as_dict, dict):
+        raise UserWarning(f"Json from file '{json_file_path}' is not a dict ({file_content_as_dict})")
 
-# Fonction pour valider un chemin de fichier et le créer s'il n'existe pas
-def validate_and_create_a_file_path(file_path: str) -> str:
-    if not os.path.exists(os.path.dirname(file_path)):
-        os.makedirs(os.path.dirname(file_path))
-    return file_path
+    return file_content_as_dict
 
-# Fonction pour valider et obtenir le chemin complet d'un fichier
-def validate_and_get_the_absolute_path(file_path: str) -> str:
-    return os.path.abspath(file_path)
+@staticmethod
+def _write_dict_to_json_file(input_dict: dict, output_json_file_path: Path) -> NoReturn:
+    # Écrit un dictionnaire Python dans un fichier JSON à partir d'un chemin de fichier
+    try:
+        with output_json_file_path.open("w", newline="\n") as json_file:
+            json.dump(input_dict, json_file, indent=4)
+    except (OSError, TypeError, ValueError, OverflowError) as e:
+        print(f"Write json to file '{output_json_file_path}' failed: ", e)
+        raise UserWarning(f"Write json file '{output_json_file_path}' from dict failed: {e}")
 
-# Fonction pour calculer le hachage MD5 d'un fichier
-def compute_the_md5_hash_of_a_file(file_path: str) -> str:
-    md5_hash = hashlib.md5()
-    with open(file_path, "rb") as file_to_hash:
-        # Lecture du fichier en petits morceaux pour éviter la surcharge mémoire
-        for chunk in iter(lambda: file_to_hash.read(4096), b""):
-            md5_hash.update(chunk)
-    return md5_hash.hexdigest()
+def _get_deployment_path(self, dict_path: DictPath) -> List[str]:
+    # Récupère le chemin de déploiement à partir d'un chemin de dictionnaire
+    deployment_path = []
+    for dict_path_step in dict_path.get_dict_path_as_list():
+        if dict_path_step in (self.key_words["label_of_a_node_dictionary"], self.key_words["label_of_a_component_dictionary"], self.key_words["label_of_a_component_env_var_dictionary"]):
+            continue
+        if dict_path_step.startswith(self.key_words["label_of_a_components_group"]):
+            deployment_path.append(self._get_group_name_from_definition_key(dict_path_step))
+            continue
+        deployment_path.append(dict_path_step)
+    deployment_path.reverse()
+    return deployment_path
 
-# Fonction pour écrire un dictionnaire dans un fichier JSON
-def write_a_dictionary_to_a_json_file(dictionary_to_write: dict, file_path: str):
-    with open(file_path, "w") as json_file:
-        json.dump(dictionary_to_write, json_file, indent=4)
+def _get_parent_node_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
+    # Récupère le chemin du dictionnaire parent du nœud à partir du chemin du dictionnaire actuel
+    working_dict_path = DictPath(from_dict_path=dict_path)
 
-# Fonction pour lire un fichier JSON dans un dictionnaire
-def read_a_json_file_into_a_dictionary(file_path: str) -> dict:
-    with open(file_path, "r") as json_file:
-        return json.load(json_file)
+    while not working_dict_path.is_empty():
+        while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+            working_dict_path.pop_the_last_step_of_the_path()
 
-# Fonction pour copier un fichier
-def copy_a_file(source_file_path: str, destination_file_path: str):
-    shutil.copyfile(source_file_path, destination_file_path)
+        parent_dict_path = working_dict_path.get_the_path_to_parent()
+        if parent_dict_path is not None:
+            parent_path_step = parent_dict_path.get_the_last_step_of_the_path()
+            if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+                return working_dict_path
 
-# Fonction pour copier un répertoire
-def copy_a_directory(source_directory_path: str, destination_directory_path: str):
-    copy_tree(source_directory_path, destination_directory_path)
+        working_dict_path.pop_the_last_step_of_the_path()
 
-# Fonction pour vérifier si une chaîne de caractères est un numéro de version
-def is_a_version_string(version_string: str) -> bool:
-    return bool(re.match(r'^(\d+)\.(\d+)\.(\d+)$', version_string))
-
-# Fonction pour vérifier si une chaîne de caractères est un numéro de version
-def is_a_valid_version(version_string: str) -> bool:
-    return bool(re.match(r'^(\d+)\.(\d+)\.(\d+)$', version_string))
-
-# Fonction pour vérifier si un chemin de fichier est un fichier DSL
-def is_a_dsl_file(file_path: str) -> bool:
-    return file_path.endswith('.dsl')
-
-# Fonction pour interrompre proprement l'exécution
-def graceful_exit(signal_received: int, frame: Any):
-    print("Exiting gracefully...")
-    sys.exit(0)
-
-# Installation de la gestion de signal pour une sortie propre
-signal.signal(signal.SIGINT, graceful_exit)
-signal.signal(signal.SIGTERM, graceful_exit)
+    return None 
 
