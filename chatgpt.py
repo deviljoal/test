@@ -1253,4 +1253,143 @@ def _replace_references_in_value(self, value: Union[str, int, float, bool, list,
 
         return output_value
 
+def _get_component_configuration_from_config_equinox_sh(self, component_name: str) -> Tuple[dict, dict]:
+        """
+        Récupère la configuration du composant à partir du fichier equinox.sh.
+
+        Args:
+            component_name (str): Le nom du composant.
+
+        Returns:
+            Tuple[dict, dict]: Un tuple contenant deux dictionnaires, le premier pour les valeurs des paramètres équinox,
+            et le second pour les paramètres équinox supplémentaires.
+        """
+        component_equinox_source_file_path = self.componentConfigDirPath / component_name / "equinox.sh"
+
+        opt_file_lines = []
+        try:
+            with component_equinox_source_file_path.open("r") as sh_file:
+                for line in sh_file.readlines():
+                    if line.lstrip().startswith("OPT_"):
+                        opt_file_lines.append(line)
+        except OSError as e:
+            raise UserWarning(f"La lecture du contenu du fichier '{component_equinox_source_file_path.relative_to(self.componentConfigDirPath)}' a échoué : {e}")
+
+        equinox_parameter_value_by_component_parameter_name = {}
+        additional_equinox_parameter_by_component_parameter_name = {}
+        equinox_parameter_name_by_component_parameter_name = {}
+        for opt_line in opt_file_lines:
+            opt_line = opt_line.replace('"', '<double-quote>')
+            opt_line = opt_line.replace('\\', '<back-slash>')
+
+            pattern = 'OPT_(?P<equinox_parameter_name>\w*)=\${(?P<component_parameter_name>\w*)(?P<character_column>:?)-(?P<equinox_component_parameter_value>.*)}'
+            parameter_name_and_default_value_math = re.match(pattern, opt_line.strip())
+            if parameter_name_and_default_value_math is not None:
+                character_column = parameter_name_and_default_value_math.group("character_column")
+                if character_column == "":
+                    print(f"     !! Vérifiez la liste des paramètres du composant dans equinox, le ':' dans la définition est manquant dans le composant '{component_name}' à la ligne : {opt_line.strip()}")
+                equinox_parameter_name = parameter_name_and_default_value_math.group("equinox_parameter_name")
+                component_parameter_name = parameter_name_and_default_value_math.group("component_parameter_name")
+                equinox_component_parameter_value = parameter_name_and_default_value_math.group("equinox_component_parameter_value")
+                equinox_component_parameter_value = equinox_component_parameter_value.strip()
+                if equinox_component_parameter_value.startswith('<double-quote>'):
+                    equinox_component_parameter_value = equinox_component_parameter_value[len('<double-quote>'):]
+                if equinox_component_parameter_value.endswith('<double-quote>'):
+                    equinox_component_parameter_value = equinox_component_parameter_value[:-len('<double-quote>')]
+                equinox_component_parameter_value = equinox_component_parameter_value.replace("${", "$!{")
+                equinox_component_parameter_value = equinox_component_parameter_value.replace('<double-quote>', '"')
+                equinox_component_parameter_value = equinox_component_parameter_value.replace('<back-slash><back-slash>', '<double-back-slash>')
+                equinox_component_parameter_value = equinox_component_parameter_value.replace('<back-slash>', '')
+                equinox_component_parameter_value = equinox_component_parameter_value.replace('<double-back-slash>', '\\')
+                if equinox_parameter_name is None or component_parameter_name is None or equinox_component_parameter_value is None:
+                    print(f"     !! Vérifiez la liste des paramètres du composant dans equinox, impossible d'obtenir les informations par défaut dans le composant '{component_name}' à la ligne : {opt_line.strip()}")
+                    continue
+                if component_parameter_name not in equinox_parameter_value_by_component_parameter_name:
+                    equinox_parameter_value_by_component_parameter_name[component_parameter_name] = equinox_component_parameter_value
+                    equinox_parameter_name_by_component_parameter_name[component_parameter_name] = equinox_parameter_name
+                else:
+                    print(f"     !! Vérifiez la liste des paramètres du composant dans equinox, le paramètre '{component_parameter_name}' est défini plusieurs fois (par un nouveau paramètre equinox '{equinox_parameter_name}') dans le composant '{component_name}' à la ligne : {opt_line.strip()}")
+                continue
+
+            for component_parameter_name, equinox_parameter_name in equinox_parameter_name_by_component_parameter_name.items():
+                pattern = f'OPT_{equinox_parameter_name}=["${{]*(?P<additional_equinox_parameter_value>[^ }}]*)'
+                parameter_name_and_other_value_math = re.match(pattern, opt_line.strip())
+                if parameter_name_and_other_value_math is None:
+                    continue
+                additional_equinox_parameter_value = parameter_name_and_other_value_math.group("additional_equinox_parameter_value").strip().strip('"')
+                additional_equinox_parameter_value = additional_equinox_parameter_value.replace("${", "$!{")
+                if additional_equinox_parameter_value is None:
+                    print(f"     !! Vérifiez la liste des paramètres du composant dans equinox, impossible d'obtenir d'autres informations dans le composant '{component_name}' à la ligne : {opt_line.strip()}")
+                    continue
+                if "OPT_" in additional_equinox_parameter_value:
+                    continue
+
+                if component_parameter_name not in additional_equinox_parameter_by_component_parameter_name \
+                        or additional_equinox_parameter_value not in additional_equinox_parameter_by_component_parameter_name[component_parameter_name]:
+                    additional_equinox_parameter_by_component_parameter_name.setdefault(component_parameter_name, []).append(additional_equinox_parameter_value)
+
+        return equinox_parameter_value_by_component_parameter_name, additional_equinox_parameter_by_component_parameter_name
+
+    # noinspection GrazieInspection
+    @staticmethod
+    def _replace_references_on_evaluations_in_value(value: Union[str, int, float, bool, list, dict], safe_globals_dict: dict = None, safe_locals_dict: dict = None, max_number_of_loop=10) -> Optional[Union[str, int, float, bool, list, dict]]:
+        """
+        Évalue l'expression référencée par le motif '$<...>' et remplace le motif par le résultat de l'évaluation.
+        En cas d'échec de l'évaluation, la fonction lève une exception UserWarning.
+        La fonction effectue plusieurs boucles sur le résultat pour gérer les références imbriquées.
+        """
+        if not isinstance(value, str):
+            return value
+
+        if safe_globals_dict is None:
+            safe_globals_dict = {}
+        if safe_locals_dict is None:
+            safe_locals_dict = {}
+
+        output_value = value
+        # make_final_evaluation = False
+        loop_count = 0
+        while loop_count < max_number_of_loop:
+            loop_count += 1
+
+            # noinspection RegExpRedundantEscape
+            referenced_evaluations = re.findall(r"\$<((?:(?!\$<).)*?)>", output_value, re.MULTILINE)
+            if len(referenced_evaluations) == 0:
+                break
+
+            for referenced_evaluation in referenced_evaluations:
+                try:
+                    safe_locals_dict_to_use = {}
+                    safe_locals_dict_to_use.update(safe_locals_dict)
+
+                    safe_global_dict_to_use = {
+                        "__builtins__": {
+                            "int": int,
+                            "str": str,
+                            "range": range,
+                            "enumerate": enumerate,
+                            "len": len,
+                        }
+                    }
+                    safe_global_dict_to_use.update(safe_globals_dict)
+
+                    eval_result = eval(referenced_evaluation, safe_global_dict_to_use, safe_locals_dict_to_use)
+                except (NameError, TypeError, SyntaxError) as e:
+                    raise UserWarning(f"L'évaluation de '''{referenced_evaluation}''' a échoué : {e}")
+                else:
+                    output_value = output_value.replace(f"$<{referenced_evaluation}>", str(eval_result))
+                    # make_final_evaluation = True
+        else:
+            raise UserWarning(f"Le remplacement de l'évaluation n'a pas été effectué avant le nombre maximal de boucles autorisé")
+
+        # if make_final_evaluation:
+        #     try:
+        #         final_eval_result = eval(output_value, {"__builtins__": None}, {})
+        #     except (SyntaxError, NameError, TypeError):
+        #         # Possiblement la chaîne à évaluer est une chaîne finale à cette étape
+        #         pass
+        #     else:
+        #         output_value = final_eval_result
+
+        return output_value
 
