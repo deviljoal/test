@@ -1066,3 +1066,191 @@ class DeploymentDescriptionBuilder(DeploymentDescriptionParser):
         # Définir la valeur actuelle dans le chemin du dictionnaire
         path_based_dict.set_the_value_pointed_by_a_dict_path(current_value, dict_path_to_component_description_definition_key)
 
+def _replace_references_in_value(self, value: Union[str, int, float, bool, list, dict], dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[Union[str, int, float, bool, list, dict]]:
+        """
+        Remplace les références et évalue les expressions dans la valeur donnée.
+
+        Args:
+            value (Union[str, int, float, bool, list, dict]): La valeur à traiter.
+            dict_path (DictPath): Le chemin vers l'entrée actuelle du dictionnaire.
+            path_based_dict (PathBasedDictionary): La structure de dictionnaire contenant les valeurs.
+
+        Returns:
+            Optional[Union[str, int, float, bool, list, dict]]: La valeur traitée.
+
+        """
+        output_value = value
+
+        # Remplacer les références sur les paramètres
+        output_value = self._replace_references_on_parameter_in_value(output_value, dict_path, path_based_dict)
+
+        # Mettre en place un dictionnaire locals sécurisé pour l'évaluation
+        safe_locals_dict_to_use = {
+            "wp": dict_path.get_dict_path_as_list(),
+        }
+
+        # Remplacer les références sur les lambdas
+        output_value = self._replace_references_on_lambdas_in_value(output_value, dict_path, path_based_dict, safe_locals_dict=safe_locals_dict_to_use)
+        output_value = self._replace_references_on_evaluations_in_value(output_value, safe_locals_dict=safe_locals_dict_to_use)
+
+        # Arrêter si la valeur n'a pas changé
+        if output_value == value:
+            return value
+
+        # Effectuer une dernière évaluation pour restaurer le type de valeur bool, int...
+        try:
+            final_eval_result = eval(output_value, {"__builtins__": None}, {})
+        except (SyntaxError, NameError, TypeError):
+            # Possiblement la chaîne à évaluer est une chaîne finale à cette étape
+            pass
+        else:
+            if type(final_eval_result) != tuple:  # "a, b" est considéré comme un tuple (a, b)
+                output_value = final_eval_result
+
+        return output_value
+
+    def _replace_references_on_parameter_in_value(self, value: Union[str, int, float, bool, list, dict], dict_path: DictPath, path_based_dict: PathBasedDictionary, max_number_of_loop=10) -> Optional[Union[str, int, float, bool, list, dict]]:
+        """
+        Remplace les références sur les paramètres dans la valeur donnée.
+
+        Args:
+            value (Union[str, int, float, bool, list, dict]): La valeur à traiter.
+            dict_path (DictPath): Le chemin vers l'entrée actuelle du dictionnaire.
+            path_based_dict (PathBasedDictionary): La structure de dictionnaire contenant les valeurs.
+            max_number_of_loop (int, facultatif): Nombre maximum de boucles pour les références imbriquées. Par défaut à 10.
+
+        Returns:
+            Optional[Union[str, int, float, bool, list, dict]]: La valeur traitée.
+        """
+        if not isinstance(value, str):
+            return value
+
+        output_value = value
+        loop_count = 0
+        while loop_count < max_number_of_loop:
+            loop_count += 1
+
+            # Trouver toutes les références de paramètres dans la valeur
+            referenced_parameters = re.findall(r"\${((?:(?!\${).)*?)}", output_value, re.MULTILINE)
+            if len(referenced_parameters) == 0:
+                break
+
+            # Remplacer chaque référence de paramètre par sa valeur
+            for referenced_parameter in referenced_parameters:
+                if "/" in referenced_parameter:
+                    parameter_value, _, _ = self._search_by_deployment_path(referenced_parameter, dict_path, path_based_dict)
+                else:
+                    parameter_value, _, _ = self._search_from_here_to_the_top_of_the_parameter_value(referenced_parameter, dict_path, path_based_dict)
+                if parameter_value is None:
+                    raise UserWarning(f"La référence de paramètre '{referenced_parameter}' de '{dict_path}' n'a pas été trouvée")
+                output_value = output_value.replace(f"${{{referenced_parameter}}}", str(parameter_value))
+        else:
+            raise UserWarning(f"La référence de '{dict_path}' n'a pas été remplacée avant le nombre maximum de boucles autorisé")
+
+        return output_value
+
+    # noinspection GrazieInspection
+    def _replace_references_on_lambdas_in_value(self, value: Union[str, int, float, bool, list, dict], dict_path: DictPath, path_based_dict: PathBasedDictionary, safe_globals_dict: dict = None, safe_locals_dict: dict = None, max_number_of_loop=10) -> Optional[Union[str, int, float, bool, list, dict]]:
+        """
+        Évalue les expressions lambda référencées dans la valeur donnée.
+
+        Args:
+            value (Union[str, int, float, bool, list, dict]): La valeur à traiter.
+            dict_path (DictPath): Le chemin vers l'entrée actuelle du dictionnaire.
+            path_based_dict (PathBasedDictionary): La structure de dictionnaire contenant les valeurs.
+            safe_globals_dict (dict, facultatif): Dictionnaire global sécurisé pour l'évaluation. Par défaut à None.
+            safe_locals_dict (dict, facultatif): Dictionnaire local sécurisé pour l'évaluation. Par défaut à None.
+            max_number_of_loop (int, facultatif): Nombre maximum de boucles pour les références imbriquées. Par défaut à 10.
+
+        Returns:
+            Optional[Union[str, int, float, bool, list, dict]]: La valeur traitée.
+        """
+        if not isinstance(value, str):
+            return value
+
+        if safe_globals_dict is None:
+            safe_globals_dict = {}
+        if safe_locals_dict is None:
+            safe_locals_dict = {}
+
+        output_value = value
+        loop_count = 0
+        while loop_count < max_number_of_loop:
+            loop_count += 1
+
+            # Trouver toutes les expressions lambda dans la valeur
+            lambda_tuples = re.findall(r"<<([A-Za-z0-9.\-_, ]*)([:=]+?)([A-Za-z0-9.\-_+ \"'()\[\]:{}]*?)>>", output_value, re.MULTILINE)
+            if len(lambda_tuples) == 0:
+                break
+            # Parcourir chaque expression lambda
+            for lambda_tuple in lambda_tuples:
+                if isinstance(lambda_tuple, tuple) and len(lambda_tuple) != 3:
+                    raise UserWarning(f"La commande '{lambda_tuple}' était inattendue")
+                current_value = output_value
+                parameters_name_string = lambda_tuple[0]
+                parameters_name_tuple = lambda_tuple[0].split(",")
+                result_destination = lambda_tuple[1]
+                lambda_string = lambda_tuple[2]
+
+                # Recherche des références de paramètres de lambda
+                parameters_values = {}
+                parameters_parent_dic = {}
+                for parameter_name in parameters_name_tuple:
+                    parameter_name = parameter_name.strip()
+                    parameter_value, parameter_parent_dict, _ = self._search_from_here_to_the_top_of_the_parameter_value(parameter_name, dict_path, path_based_dict)
+                    if parameter_value is None:
+                        raise UserWarning(f"Le paramètre '{parameter_name}' de '{dict_path}' n'a pas été trouvé")
+
+                    parameters_values[parameter_name] = parameter_value
+                    parameters_parent_dic[parameter_name] = parameter_parent_dict
+
+                # Construire les arguments lambda comme a, b, c...
+                abc_string = ",".join(list(string.ascii_lowercase[:len(parameters_name_tuple)]))
+                evaluation_string = f"lambda {abc_string}: {lambda_string}"
+
+                # Évaluer l'expression lambda
+                try:
+                    safe_locals_dict_to_use = {}
+                    safe_locals_dict_to_use.update(safe_locals_dict)
+
+                    safe_global_dict_to_use = {
+                        "__builtins__": {
+                            "int": int,
+                            "str": str,
+                            "range": range,
+                            "enumerate": enumerate,
+                            "len": len,
+                        }
+                    }
+                    safe_global_dict_to_use.update(safe_globals_dict)
+
+                    lambda_function = eval(evaluation_string, safe_global_dict_to_use, safe_locals_dict_to_use)
+                except (NameError, TypeError, SyntaxError) as e:
+                    raise UserWarning(f"L'évaluation ('''{evaluation_string}''') a échoué : {e}")
+
+                # Appliquer la fonction lambda
+                lambda_result = lambda_function(*parameters_values.values())
+
+                # Affecter ou non les résultats de la fonction lambda
+                if result_destination.startswith("="):
+                    parameters_parent_dic[parameters_name_tuple[0].strip()][parameters_name_tuple[0].strip()] = lambda_result
+
+                # Remplacer le motif lambda pour la boucle suivante
+                rebuilt_string = f"<<{parameters_name_string}{result_destination}{lambda_string}>>"
+                output_value = current_value.replace(rebuilt_string, str(lambda_result))
+                # make_final_evaluation = True
+        else:
+            raise UserWarning(f"La référence de '{dict_path}' n'a pas été remplacée avant le nombre maximum de boucles autorisé")
+
+        # if make_final_evaluation:
+        #     try:
+        #         final_eval_result = eval(output_value, {"__builtins__": None}, {})
+        #     except (SyntaxError, NameError, TypeError):
+        #         # Possiblement la chaîne à évaluer est une chaîne finale à cette étape
+        #         pass
+        #     else:
+        #         output_value = final_eval_result
+
+        return output_value
+
+
