@@ -455,3 +455,219 @@ class DeploymentDescriptionParser:
             working_dict_path.pop_the_last_step_of_the_path()
 
         return parents_nodes_names
+# Méthode interne pour obtenir le chemin du dictionnaire parent du groupe de composants
+    def _get_parent_component_group_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
+        # Création d'un chemin de travail à partir du chemin donné
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        # Parcours du chemin de travail
+        while not working_dict_path.is_empty():
+            # Suppression des index du chemin de travail
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            # Récupération de la dernière étape du chemin de travail
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+
+            # Vérification si la dernière étape du chemin de travail est un dictionnaire de noeud
+            if last_path_step == self.key_words["label_of_a_node_dictionary"]:
+                return None
+            # Vérification si la dernière étape du chemin de travail commence par un groupe de composants
+            if last_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                return working_dict_path
+
+            # Suppression de la dernière étape du chemin de travail
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return None
+
+    # Méthode interne pour vérifier si le groupe parent est le groupe principal parent
+    def _is_parent_group_is_the_main_parent_group(self, dict_path: DictPath) -> bool:
+        # Récupération du chemin du dictionnaire parent du groupe de composants
+        parent_group_dict_path = self._get_parent_component_group_dict_path(dict_path)
+
+        # Vérification si le chemin du dictionnaire parent est vide
+        if parent_group_dict_path is None:
+            return False
+
+        # Récupération des étapes du chemin du dictionnaire parent en excluant le premier
+        parent_group_dict_path_as_list_without_him = parent_group_dict_path.get_dict_path_as_list()[1:]
+
+        # Parcours des étapes du chemin du dictionnaire parent
+        for dict_path_step in parent_group_dict_path_as_list_without_him:
+            # Vérification si l'étape du chemin du dictionnaire parent commence par un groupe de composants
+            if dict_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                return False
+        return True
+
+    # Méthode interne pour obtenir le chemin du groupe de composants parent principal
+    def _get_main_parent_component_group_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
+        # Création d'un chemin de travail à partir du chemin donné
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        # Initialisation du candidat pour le chemin du groupe de composants parent principal
+        candidate_dict_path = None
+
+        # Parcours du chemin de travail
+        while not working_dict_path.is_empty():
+            # Suppression des index du chemin de travail
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            # Récupération de la dernière étape du chemin de travail
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+
+            # Vérification si la dernière étape du chemin de travail est un dictionnaire de noeud
+            if last_path_step == self.key_words["label_of_a_node_dictionary"]:
+                break
+            # Vérification si la dernière étape du chemin de travail commence par un groupe de composants
+            if last_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                # Mise à jour du candidat pour le chemin du groupe de composants parent principal
+                candidate_dict_path = DictPath(from_dict_path=working_dict_path)
+
+            # Suppression de la dernière étape du chemin de travail
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return candidate_dict_path
+
+    # Méthode interne pour obtenir les noms des groupes de composants parents
+    def _get_parents_component_groups_names(self, dict_path: DictPath) -> Optional[List[str]]:
+        # Initialisation de la liste des noms des groupes de composants parents
+        parents_component_groups_names = []
+        
+        # Création d'un chemin de travail à partir du chemin donné
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        # Parcours du chemin de travail
+        while not working_dict_path.is_empty():
+            # Suppression des index du chemin de travail
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            # Récupération de la dernière étape du chemin de travail
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+
+            # Récupération du chemin vers le parent du dictionnaire
+            parent_dict_path = working_dict_path.get_the_path_to_parent()
+
+            # Vérification si le chemin vers le parent du dictionnaire existe
+            if parent_dict_path is not None:
+                # Vérification si la dernière étape du chemin de travail commence par un groupe de composants
+                if last_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                    # Ajout du nom du groupe de composants parent à la liste
+                    parents_component_groups_names.append(self._get_group_name_from_definition_key(last_path_step))
+
+            # Suppression de la dernière étape du chemin de travail
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return parents_component_groups_names
+
+    # Méthode interne pour obtenir le nom du groupe à partir de la clé de définition du groupe
+    def _get_group_name_from_definition_key(self, group_name_definition_key):
+        return group_name_definition_key[group_name_definition_key.find(self.key_words["label_of_a_components_group"]) + len(self.key_words["label_of_a_components_group"]):]
+
+    # Méthode interne pour rechercher par chemin de déploiement
+    def _search_by_deployment_path(self, parameter_deployment_path_as_string: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[Optional[Union[str, int, float, bool, list, dict]], Optional[dict], Optional[DictPath]]:
+        # Séparation du chemin de déploiement en une liste de pas
+        working_parameter_path = parameter_deployment_path_as_string.split("/")
+
+        # Récupération du premier pas du chemin de déploiement
+        first_relative_deployment_path_step = working_parameter_path[0]
+
+        # Recherche du premier pas du chemin de déploiement
+        _, _, first_relative_deployment_path_step_parent_dict_path = self._search_from_here_to_the_top_of_the_parameter_value(first_relative_deployment_path_step, dict_path, path_based_dict)
+        
+        # Vérification si le premier pas du chemin de déploiement a été trouvé
+        if first_relative_deployment_path_step_parent_dict_path is None:
+            potential_component_group_name = self.key_words["label_of_a_components_group"] + first_relative_deployment_path_step
+            _, _, first_relative_deployment_path_step_parent_dict_path = self._search_from_here_to_the_top_of_the_parameter_value(potential_component_group_name, dict_path, path_based_dict)
+            if first_relative_deployment_path_step_parent_dict_path is None:
+                raise UserWarning(f"The '{dict_path}' parameter reference '{first_relative_deployment_path_step}' not found")
+
+        dict_path = first_relative_deployment_path_step_parent_dict_path
+        param_value = None
+        param_parent_dict = None
+
+        # Parcours de la liste des pas du chemin de déploiement
+        while len(working_parameter_path) > 0:
+            node_or_component_group_or_component_name = working_parameter_path[0]
+            potential_component_group_name = self.key_words["label_of_a_components_group"] + node_or_component_group_or_component_name
+
+            param_parent_dict = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+            if not isinstance(param_parent_dict, dict):
+                return None, None, None
+
+            if node_or_component_group_or_component_name in param_parent_dict:
+                working_parameter_path.pop(0)
+                param_value = param_parent_dict.get(node_or_component_group_or_component_name, None)
+                dict_path = dict_path.get_the_path_to_a_following_step(node_or_component_group_or_component_name)
+                continue
+            elif potential_component_group_name in param_parent_dict:
+                working_parameter_path.pop(0)
+                param_value = param_parent_dict.get(potential_component_group_name, None)
+                dict_path = dict_path.get_the_path_to_a_following_step(potential_component_group_name)
+                continue
+            elif self.key_words["label_of_a_node_dictionary"] in param_parent_dict:
+                dict_path = dict_path.get_the_path_to_a_following_step(self.key_words["label_of_a_node_dictionary"])
+                continue
+            elif self.key_words["label_of_a_component_dictionary"] in param_parent_dict:
+                dict_path = dict_path.get_the_path_to_a_following_step(self.key_words["label_of_a_component_dictionary"])
+                continue
+            elif self.key_words["label_of_a_component_env_var_dictionary"] in param_parent_dict:
+                dict_path = dict_path.get_the_path_to_a_following_step(self.key_words["label_of_a_component_env_var_dictionary"])
+                continue
+            else:
+                return None, None, None
+
+        return param_value, param_parent_dict, dict_path
+
+    # Méthode statique pour rechercher de cet endroit au sommet de la valeur du paramètre
+    @staticmethod
+    def _search_from_here_to_the_top_of_the_parameter_value(parameter: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[Optional[Union[str, int, float, bool, list, dict]], Optional[dict], Optional[DictPath]]:
+        # Fonction interne pour rechercher la valeur du paramètre dans l'étape du chemin
+        def search_parameter_value_in_path_step(dict_path_to_check: DictPath, last_key_checked: str = None) -> Tuple[Optional[Union[str, int, float, bool, list, dict]], Optional[dict], Optional[DictPath]]:
+            path_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path_to_check)
+            if not isinstance(path_value, dict):
+                return None, None, None
+
+            param_value = path_value.get(parameter, None)
+            if param_value is not None:
+                return param_value, path_value, dict_path_to_check
+
+            key_list = list(path_value.keys())
+            if last_key_checked is None or last_key_checked not in path_value.keys():
+                pass
+            else:
+                key_list = key_list[:key_list.index(last_key_checked)]
+                key_list.reverse()
+
+            for key in key_list:
+                param_value, param_parent_dict, dict_path_to_param_parent_dict = search_parameter_value_in_path_step(dict_path_to_check.get_the_path_to_a_following_step(key))
+                if param_value is not None:
+                    return param_value, param_parent_dict, dict_path_to_param_parent_dict
+
+            return None, None, None
+
+        # Création d'un chemin de travail à partir du chemin donné
+        working_dict_path = DictPath(from_dict_path=dict_path)
+        last_dict_key_checked = None
+
+        # Parcours du chemin de travail
+        while not working_dict_path.is_empty():
+            # Suppression des index du chemin de travail
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            # Recherche de la valeur du paramètre dans l'étape du chemin
+            parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict = search_parameter_value_in_path_step(working_dict_path, last_dict_key_checked)
+            if parameter_value is not None:
+                return parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict
+
+            last_dict_key_checked = working_dict_path.pop_the_last_step_of_the_path()
+        else:
+            parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict = search_parameter_value_in_path_step(working_dict_path, last_dict_key_checked)
+            if parameter_value is not None:
+                return parameter_value, parameter_parent_dict, dict_path_to_parameter_parent_dict
+
+        return None, None, None
+
