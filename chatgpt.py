@@ -3449,3 +3449,153 @@ def _get_syslog_information(self, path_based_dict: PathBasedDictionary) -> tuple
         # Génère les lignes de configuration de mode réseau pour Docker Compose avec le format service
         dockercompose_lines = [f'        network_mode: "service:{service_name}"']
         return dockercompose_lines
+class PilRunning(PilDeploymentDescriptionParser):
+    def __init__(self, deployment_folder_path: Path):
+        # Initialise la classe parente avec le chemin du dossier de déploiement
+        PilDeploymentDescriptionParser.__init__(self, deployment_folder_path)
+        # Initialise l'action à effectuer à None
+        self._actionToBePerformed = None
+
+    def save_the_basic_docker_images_used(self) -> NoReturn:
+        # Vérifie si le système d'exploitation est Windows
+        if platform.system() == "Windows":
+            print(" - Non autorisé sur Windows")
+            return
+
+        # Vérifie si les composants GAN sont déployés
+        if not self.is_gan_components_deployed():
+            print(" - Les fichiers dockercompose des composants GAN ne sont pas créés")
+            return
+
+        # Récupère les images Docker utilisées et leur hachage
+        used_docker_images, used_docker_images_hash = self._get_the_used_docker_images_list_and_hash()
+
+        # Définit le chemin du fichier pour sauvegarder les images Docker
+        file_path = self.pilDirPath / f"pil-docker-images-{used_docker_images_hash}.tar.gz"
+
+        print(f" - Récupère les images Docker")
+        for used_docker_image in used_docker_images:
+            print(f"      - Récupère {used_docker_image}")
+            command_text = "docker pull " + used_docker_image
+            log_file_path = self.pilDirPath / "pull-docker-images.log"
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
+            complete_process = run_subprocess(log_file_path, command_text, current_working_directory=self.pilDirPath, shell=True)
+            if complete_process.returncode != 0:
+                print(f"        ! Échec de la récupération de l'image Docker {used_docker_image}")
+                return
+
+        print(f" - Sauvegarde les images Docker")
+        command_text = "docker save " + " ".join(used_docker_images) + f' | gzip > "{file_path}"'
+        log_file_path = self.pilDirPath / "save-docker-images.log"
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        complete_process = run_subprocess(log_file_path, command_text, current_working_directory=self.pilDirPath, shell=True)
+        if complete_process.returncode != 0:
+            print(f"        ! Échec de la sauvegarde des images Docker")
+
+    def load_the_basic_docker_images_to_used(self, file_to_load: Path, do_not_check_the_used_components_hash: bool = False) -> NoReturn:
+        # Vérifie si le système d'exploitation est Windows
+        if platform.system() == "Windows":
+            print(" - Non autorisé sur Windows")
+            return
+
+        # Vérifie si les composants GAN sont déployés
+        if not self.is_gan_components_deployed():
+            print(" - Les fichiers dockercompose des composants GAN ne sont pas créés")
+            return
+
+        # Vérifie si le chemin du fichier à charger existe
+        if not file_to_load.is_file():
+            print(" - Le chemin donné n'existe pas ou ce n'est pas un chemin de fichier")
+            return
+
+        # Récupère les images Docker utilisées et leur hachage
+        _, used_docker_images_hash = self._get_the_used_docker_images_list_and_hash()
+
+        # Vérifie si le hachage des composants utilisés correspond à celui du fichier
+        if not do_not_check_the_used_components_hash and used_docker_images_hash not in file_to_load.name:
+            print(" ! Les fichiers dockercompose des composants GAN n'ont pas le hachage attendu")
+            return
+
+        print(f" - Charge les images Docker à partir de '{file_to_load}'")
+        command_text = f'docker load -i "{file_to_load}"'
+        log_file_path = self.pilDirPath / "load-docker-images.log"
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        complete_process = run_subprocess(log_file_path, command_text, current_working_directory=file_to_load.parent, shell=True)
+        if complete_process.returncode != 0:
+            print(f"        ! Échec du chargement des images Docker")
+
+    def remove_the_basic_docker_images_used(self) -> NoReturn:
+        # Vérifie si le système d'exploitation est Windows
+        if platform.system() == "Windows":
+            print(" - Non autorisé sur Windows")
+            return
+
+        # Vérifie si les composants GAN sont déployés
+        if not self.is_gan_components_deployed():
+            print(" - Les fichiers dockercompose des composants GAN ne sont pas créés")
+            return
+
+        # Vérifie si les conteneurs des composants GAN sont en cours d'exécution
+        if self.is_gan_components_running():
+            print(" - Les conteneurs des composants GAN sont déjà en cours d'exécution")
+            return
+
+        # Récupère les images Docker utilisées et leur hachage
+        used_docker_images, used_docker_images_hash = self._get_the_used_docker_images_list_and_hash()
+
+        print(f" - Supprime les images Docker")
+        for used_docker_image in used_docker_images:
+            print(f"      - Supprime {used_docker_image}")
+            command_text = "docker rmi " + used_docker_image
+            log_file_path = self.pilDirPath / "remove-docker-images.log"
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
+            complete_process = run_subprocess(log_file_path, command_text, current_working_directory=self.pilDirPath, shell=True)
+            if complete_process.returncode != 0:
+                print(f"        ! Échec de la suppression de l'image Docker {used_docker_image}")
+
+    def _get_the_used_docker_images_list_and_hash(self):
+        # Récupère les images Docker utilisées et calcule leur hachage
+        used_docker_images = self._get_running_status_from_running_deployment_dict(self.listOfDockerImagesUsedKey, default_value=[])
+        hash_builder = hashlib.sha256()
+        for used_docker_image in used_docker_images:
+            hash_builder.update(used_docker_image.encode())
+        return used_docker_images, hash_builder.hexdigest()
+
+    def start(self, keep_the_intermediate_images=False) -> NoReturn:
+        # Vérifie si le système d'exploitation est Windows
+        if platform.system() == "Windows":
+            print(" - Non autorisé sur Windows")
+            return
+
+        # Vérifie si les composants GAN sont déployés
+        if not self.is_gan_components_deployed():
+            print(" - Les fichiers dockercompose des composants GAN ne sont pas créés")
+            return
+
+        # Vérifie si les conteneurs des composants GAN sont déjà en cours d'exécution
+        if self.is_gan_components_running():
+            print(" - Les conteneurs des composants GAN sont déjà en cours d'exécution")
+            return
+
+        # Récupère les fichiers dockercompose dans le dossier de déploiement
+        dockercompose_path_results: List[Path] = list(self.pilDirPath.glob(f"./*.dockercompose"))
+
+        print(f" - Démarre PIL")
+        command_arguments = ["docker-compose", "-p", "pil-session"]
+
+        for dockercompose_path in dockercompose_path_results:
+            command_arguments += ["-f", dockercompose_path.name]
+
+        command_arguments += ["up", "-d"]
+
+        if not keep_the_intermediate_images:
+            command_arguments += ["--build", "--force-recreate"]
+
+        log_file_path = self.pilDirPath / "pil-session.log"
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        complete_process = run_subprocess(log_file_path, command_arguments, current_working_directory=self.pilDirPath)
+        if complete_process.returncode != 0:
+            print(f"        ! Échec du démarrage des fichiers dockercompose de PIL")
+
+        self._read_the_running_deployment_dict()
+        self._set_gan_components_running_status(True)
