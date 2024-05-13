@@ -3368,3 +3368,84 @@ def _create_the_associated_component_pil_dockerfile(self, component_name: str, c
         except (OSError, TypeError, ValueError) as e:
             print(f"             - L'ajout au fichier '{file_path.relative_to(self.deploymentDirPath)}' a échoué : ", e)
             raise UserWarning(f"L'ajout au fichier '{file_path.relative_to(self.deploymentDirPath)}' a échoué : {e}")
+def _get_syslog_information(self, path_based_dict: PathBasedDictionary) -> tuple:
+        # Récupère le dictionnaire de la section PIL
+        pil_section_dict = path_based_dict.get_the_value_pointed_by_a_dict_path(
+            DictPath(from_dict_path_as_list=[self.key_words["label_of_a_pil_section"]]))
+        # Récupère le dictionnaire de la section Jaeger
+        jaeger_section_dict=path_based_dict.get_the_value_pointed_by_a_dict_path(
+            DictPath(from_dict_path_as_list=[self.key_words["label_of_a_jaeger_section"]]))
+        # Récupère les informations sur le syslog pour PIL et Jaeger
+        syslog_dict = pil_section_dict.get("syslog", None)
+        syslog_dict_jaeger = jaeger_section_dict.get("syslog", None)
+        # Vérifie si les informations sur le syslog sont présentes pour PIL et Jaeger
+        if syslog_dict is None and syslog_dict_jaeger is None:
+            raise UserWarning(f"Les informations sur le syslog PIL ne sont pas présentes")
+
+        # Récupère l'état de l'activation du syslog pour PIL et Jaeger
+        is_enabled = syslog_dict.get("isEnabled", None)
+        is_enabled_jaeger=syslog_dict_jaeger.get("isEnabled", None)
+        # Vérifie si l'activation du syslog est définie pour PIL et Jaeger
+        if is_enabled is None and is_enabled_jaeger is None:
+            raise UserWarning(f"L'activation du syslog PIL n'est pas définie")
+
+        # Si le syslog n'est pas activé pour PIL et Jaeger, retourne les valeurs correspondantes
+        if is_enabled is not True and is_enabled_jaeger is not True:
+            return is_enabled, None, None, None
+        # Récupère l'hôte du syslog pour PIL et Jaeger
+        host = syslog_dict.get("host", None)
+        host_jaeger=syslog_dict_jaeger.get("host", None)
+        # Vérifie si l'hôte du syslog est défini pour PIL et Jaeger
+        if host is None and host_jaeger is None:
+            raise UserWarning(f"L'hôte du syslog PIL n'est pas défini")
+
+        # Récupère le port du syslog pour PIL et Jaeger
+        port = syslog_dict.get("port", None)
+        port_jaeger=syslog_dict_jaeger.get("port", None)
+        # Vérifie si le port du syslog est défini pour PIL et Jaeger
+        if port is None and port_jaeger is None:
+            raise UserWarning(f"Le port du syslog PIL n'est pas défini")
+
+        # Récupère le préfixe du nom de l'application pour PIL et Jaeger
+        app_name_prefix = syslog_dict.get("appNamePrefix", None)
+        app_name_prefix_jaeger=syslog_dict_jaeger.get("appNamePrefix", None)
+        # Vérifie si le préfixe du nom de l'application est défini pour PIL et Jaeger
+        if app_name_prefix is None and app_name_prefix_jaeger is None:
+            raise UserWarning(f"Le préfixe du nom de l'application du syslog PIL n'est pas défini")
+
+        # Retourne les informations sur le syslog pour PIL
+        return is_enabled, host, port, app_name_prefix
+
+    @staticmethod
+    def _get_component_associated_image_name(component_name: str, components_version: str, image_repository: str) -> str:
+        # Construit le nom de l'image Docker associée au composant
+        if "gan-docker" in image_repository:
+            component_associated_image_name = f"{image_repository}/{component_name}:{components_version}"
+        else:
+            component_associated_image_name = f"{image_repository}-{component_name}:{components_version}"
+        return component_associated_image_name
+
+    def _get_component_network_mode_dockercompose_lines(self, component_service_name: str, component_ip_address: str) -> List[str]:
+        # Récupère les lignes de configuration de mode réseau pour Docker Compose
+        if component_ip_address in self._first_service_by_ip_address_on_all_dockercomposes:
+            service_name = self._first_service_by_ip_address_on_all_dockercomposes[component_ip_address]
+            return self._get_component_network_mode_dockercompose_lines_with_service_format(service_name)
+        else:
+            self._first_service_by_ip_address_on_all_dockercomposes[component_ip_address] = component_service_name
+            return self._get_component_network_mode_dockercompose_lines_with_network_format(self.pilCommonNetworkName, component_ip_address)
+
+    @staticmethod
+    def _get_component_network_mode_dockercompose_lines_with_network_format(network_name: str, ipv4_address: str) -> List[str]:
+        # Génère les lignes de configuration de mode réseau pour Docker Compose avec le format réseau
+        dockercompose_lines = [
+            f'        networks:',
+            f'            {network_name}:',
+            f'                ipv4_address: "{ipv4_address}"',
+        ]
+        return dockercompose_lines
+
+    @staticmethod
+    def _get_component_network_mode_dockercompose_lines_with_service_format(service_name: str) -> List[str]:
+        # Génère les lignes de configuration de mode réseau pour Docker Compose avec le format service
+        dockercompose_lines = [f'        network_mode: "service:{service_name}"']
+        return dockercompose_lines
