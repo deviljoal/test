@@ -1984,3 +1984,130 @@ class PelRunning(PelDeploymentDescriptionParser):
                 log_file_dir_path.parent.mkdir(parents=True, exist_ok=True)
                 print(f"     - Copier les journaux du composant '{component_deployment_name}' vers '{log_file_dir_path.relative_to(self.logDirPath)}'")
                 copy_tree(str(component_deployment_path / "logs"), str(log_file_dir_path), preserve_mode=True)
+
+    def build_single_dsl_pel(self, dsl_log_xml_trace_level: str = "DEBUG", dsl_log_xml_max_log_file_size: int = 10240000):
+        # Construit un PEL DSL unique
+        if not self.is_gan_components_deployed():
+            print(" - Les composants Gan ne sont pas déployés")
+            return
+
+        if self.is_gan_components_running():
+            print(" - Les composants Gan sont en cours d'exécution, arrêtez-les avant de tenter de construire un PEL DSL unique")
+            return
+
+        ordered_dsl_paths = self._get_components_path_in_description_order()
+
+        self._read_the_running_deployment_dict()
+        self._singleDslPel.build_single_dsl_pel_deployment(dsl_log_xml_trace_level, dsl_log_xml_max_log_file_size, ordered_dsl_paths)
+        self._set_single_dsl_deployed_status(True)
+
+    def start_single_dsl_pel(self):
+        # Démarre un PEL DSL unique
+        if not self.is_gan_components_single_dsl_deployed():
+            print(" - Les composants Gan ne sont pas déployés en tant que PEL DSL unique")
+            return
+
+        if self.is_databases_running():
+            print(" - Les bases de données sont déjà en cours d'exécution")
+        else:
+            self._perform_the_action("start-databases")
+
+            print(" - Pause pendant 30s pour permettre le démarrage des bases de données...")
+            time.sleep(30)
+
+        if self.is_gan_components_running():
+            print(" - Les composants Gan sont déjà en cours d'exécution")
+        else:
+            self._read_the_running_deployment_dict()
+            self._singleDslPel.start_single_dsl()
+            self._set_gan_components_running_status(True)
+            self._set_single_dsl_gan_components_running_status(True)
+
+    def stop_single_dsl_pel(self):
+        # Arrête un PEL DSL unique
+        if not self.is_single_dsl_gan_components_running():
+            print(" - Non disponible tant qu'aucun déploiement PEL DSL unique n'est en cours")
+            return
+
+        if self.is_databases_running():
+            self._perform_the_action("stop-databases")
+            self._set_databases_running_status(False)
+        else:
+            print(" - Aucune base de données à arrêter")
+
+        if not self.is_gan_components_running():
+            print(" - Aucun composant Gan à arrêter")
+        else:
+            self._read_the_running_deployment_dict()
+            self._singleDslPel.stop_single_dsl()
+            self._set_gan_components_running_status(False)
+            self._set_single_dsl_gan_components_running_status(False)
+
+    def copy_working_databases_data_root_folder_as_original(self) -> NoReturn:
+        # Copie le dossier racine des données des bases de données en tant qu'original
+        if self.is_databases_running():
+            print("Les bases de données fonctionnent, donc impossible de faire la copie originale")
+            return
+
+        if not DataBase.save_databases_data_folders(self.databasesDirPath, self.originalDatabasesDirPath):
+            print(f"La copie des dossiers de données des bases de données en cours a échoué")
+        else:
+            print(f"Les dossiers de données des bases de données en cours sont enregistrés en tant qu'originaux")
+
+    def restore_working_databases_data_root_folder_from_original(self) -> NoReturn:
+        # Restaure le dossier racine des données des bases de données à partir de l'original
+        if self.is_databases_running():
+            print("Les bases de données fonctionnent, donc impossible de restaurer l'original")
+            return
+
+        if not DataBase.restore_databases_data_folders(self.originalDatabasesDirPath, self.databasesDirPath):
+            print(f"La restauration des dossiers de données des bases de données en cours a échoué")
+        else:
+            print(f"Les dossiers de données des bases de données en cours sont restaurés")
+
+    def test(self, cataclysm_folder_path: Path, test_profile: str, test_name_to_run: str = None) -> NoReturn:
+        # Exécute les tests
+        if not self.is_databases_running():
+            print(" - Les bases de données ne sont pas en cours d'exécution")
+            return
+
+        if not self.is_gan_components_running():
+            print(" - Les composants Gan ne sont pas en cours d'exécution")
+            return
+
+        print(f" - Tester le déploiement dans le dossier '{self.runningDeploymentPath}'")
+
+        self._read_the_running_deployment_dict()
+        self._set_test_in_progress_status(True)
+
+        working_repository = None
+
+        command_arguments = [
+            "mvn", "clean", "install",
+            f"-P{test_profile}",
+            "-fae",
+            "-Dmaven.test.failure.ignore=false",
+        ]
+
+        if working_repository is not None:
+            command_arguments.append(f"-Dmaven.repo.local=\"{working_repository}\"")
+
+        mvn_options_associated_to_deployment_dict = self._deployment_dict.get(self.key_words["label_of_a_pel_section"], {}).get("mvnOptionsAssociatedToDeployment", {})
+        for option_name, option_value in mvn_options_associated_to_deployment_dict.items():
+            command_arguments.append(f"{option_name}={option_value}")
+
+        if test_name_to_run is not None:
+            command_arguments.append(f"-Dtest={test_name_to_run}")
+
+        command_arguments = adapt_the_command_arguments_when_using_bash_on_windows(command_arguments)
+
+        if not self.is_single_dsl_gan_components_running():
+            log_file_path = self.logDirPath / "test.log"
+        else:
+            log_file_path = self.logDirPath / "single-dsl-test.log"
+
+        print(command_arguments)
+        run_subprocess(log_file_path, command_arguments, current_working_directory=cataclysm_folder_path)
+
+        self._set_test_in_progress_status(False)
+
