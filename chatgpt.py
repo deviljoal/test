@@ -2323,3 +2323,138 @@ class DataBase:
 
         print(f"Le dossier de données des bases de données '{databases_working_root_dir_path}' est initialisé")
         return True
+class SingleDslPel:
+    # Noms des dossiers et fichiers utilisés pour le déploiement du PEL DSL unique
+    singleDslPelDeploymentRootFolderName = "single-dsl-pel-deployment"
+    consoleSingleDslLogFileName = "single-dsl-console.log"
+    singleDslLogFolderName = "single-dsl-logs"
+
+    def __init__(self, deployment_folder_path: Path):
+        # Chemins vers les dossiers et fichiers nécessaires pour le déploiement
+        self.allDslRootDirPath = deployment_folder_path / PelDeploymentDescriptionParser.pelFolderName / PelDeploymentDescriptionParser.runningDeploymentRootFolderName
+        self.singleDslTargetDirPath = deployment_folder_path / PelDeploymentDescriptionParser.pelFolderName / self.singleDslPelDeploymentRootFolderName
+        self.logDirPath = deployment_folder_path / PelDeploymentDescriptionParser.pelFolderName / PelDeploymentDescriptionParser.runningDeploymentLogFolderName
+        self.singleDslLogFolderPath = self.logDirPath / self.singleDslLogFolderName
+
+    # Méthode pour construire le déploiement PEL DSL unique
+    def build_single_dsl_pel_deployment(self, dsl_log_xml_trace_level: str = "DEBUG", dsl_log_xml_max_log_file_size: int = 10240000,
+                                        ordered_dsl_paths: List[Path] = None) -> bool:
+        # Vérifier si le dossier de déploiement PEL existe
+        if not self.allDslRootDirPath.is_dir():
+            raise UserWarning(f"Le dossier de déploiement PEL '{self.allDslRootDirPath}' n'existe pas!")
+
+        # Supprimer le dossier cible s'il existe déjà
+        if self.singleDslTargetDirPath.exists():
+            print(f"Suppression de '{self.singleDslTargetDirPath}' existant")
+            shutil.rmtree(self.singleDslTargetDirPath, ignore_errors=True)
+        self.singleDslTargetDirPath.mkdir(parents=True, exist_ok=True)
+
+        self.logDirPath.mkdir(parents=True, exist_ok=True)
+
+        # Obtenir les chemins des DSLs dans l'ordre si spécifié
+        if ordered_dsl_paths is None:
+            dsl_paths = self.list_the_dsl_in_folder()
+        else:
+            dsl_paths = ordered_dsl_paths
+
+        # Fusionner les fichiers JAR des dossiers DSL "bin" en un seul dossier
+        self._merge_the_jar_files_from_dsl_folders_into_one_folder("bin", dsl_paths)
+
+        # Fusionner les fichiers JAR des dossiers DSL "lib" en un seul dossier
+        self._merge_the_jar_files_from_dsl_folders_into_one_folder("lib", dsl_paths)
+
+        # Fusionner les fichiers de ressources des dossiers DSL "resources" en un seul dossier
+        self._merge_the_resources_files_from_dsl_folders_into_one_folder("resources", dsl_paths)
+
+        # Fusionner les fichiers autres que les fichiers de définition DSL des dossiers DSL "etc" en un seul dossier
+        self._merge_the_files_other_than_the_dsl_definition_files_from_dsl_folders_into_one_folder(["dsl.json", self.consoleSingleDslLogFileName], "etc", dsl_paths)
+
+        # Fusionner les fichiers "dsl.json" des dossiers DSL "etc" en un seul fichier
+        single_dsl_json_file_path, special_dsl_json_file_path_list = self._merge_the_dsl_json_file_from_dsl_folders_into_one_file("dsl.json", "etc", dsl_paths)
+        if single_dsl_json_file_path is None:
+            print("ERREUR: Impossible de créer le fichier JSON DSL, abandon!")
+            return False
+
+        # Construire le fichier "dsl.log4j.xml" du DSL unique à partir du fichier "dsl.json" unique
+        if not self._build_the_single_dsl_log_xml_file_from_the_single_dsl_json_file(self.consoleSingleDslLogFileName, single_dsl_json_file_path,
+                                                                                     trace_level=dsl_log_xml_trace_level,
+                                                                                     max_log_file_size=dsl_log_xml_max_log_file_size):
+            print("ERREUR: Impossible de construire le fichier log4j.xml du DSL, abandon!")
+            return False
+
+        # Pour chaque DSL spécial, construire le fichier "dsl.log4j.xml" et copier les dossiers
+        for special_dsl_json_file_path in special_dsl_json_file_path_list:
+            if not self._build_the_single_dsl_log_xml_file_from_the_single_dsl_json_file(self.consoleSingleDslLogFileName, special_dsl_json_file_path,
+                                                                                         trace_level=dsl_log_xml_trace_level,
+                                                                                         max_log_file_size=dsl_log_xml_max_log_file_size):
+                print("ERREUR: Impossible de construire le fichier log4j.xml du DSL, abandon!")
+                return False
+
+            single_dsl_folder_path = single_dsl_json_file_path.parent.parent
+            special_dsl_folder_path = special_dsl_json_file_path.parent.parent
+            shutil.copytree(str(single_dsl_folder_path / "bin"), str(special_dsl_folder_path / "bin"))
+            shutil.copytree(str(single_dsl_folder_path / "lib"), str(special_dsl_folder_path / "lib"))
+            shutil.copytree(str(single_dsl_folder_path / "resources"), str(special_dsl_folder_path / "resources"))
+
+        return True
+
+    # Méthode pour démarrer le DSL unique
+    def start_single_dsl(self) -> bool:
+        if not self.start_dsl(self.singleDslTargetDirPath / "main-dsl-folder"):
+            return True
+
+        has_some_failures = False
+        single_dsl_folders = self.singleDslTargetDirPath.glob("*dsl-folder*")
+        for single_dsl_folder in single_dsl_folders:
+            if single_dsl_folder.name == "main-dsl-folder":
+                continue
+
+            if not self.start_dsl(single_dsl_folder, xms_option_value="64m", xmx_option_value="256m"):
+                has_some_failures = True
+        return has_some_failures
+
+    # Méthode pour démarrer un DSL spécifique
+    def start_dsl(self, dsl_folder_path: Path, xms_option_value: str = None, xmx_option_value: str = None) -> bool:
+        print(f"Démarrage du DSL '{dsl_folder_path}'...")
+
+        dsl_bin_dir_path = dsl_folder_path / "bin"
+        results = list(dsl_bin_dir_path.glob("dsl-*.jar"))
+        if len(results) != 1:
+            print(f"Impossible de trouver un unique fichier JAR correspondant au composant DSL dans le dossier '{dsl_bin_dir_path}'")
+            return False
+
+        dsl_jar_path = results[0]
+
+        command_arguments = [
+            r"java",
+            f"-Dname={dsl_folder_path.stem}",
+            r"-Djava.security.egd=file:/dev/urandom",
+            r"-Dvertx.logger-delegate-factory-class-name=io.vertx.core.logging.SLF4JLogDelegateFactory",
+        ]
+
+        if xms_option_value is not None:
+            print(f"Démarrage de '{dsl_bin_dir_path}' avec l'option '-Xms{xms_option_value}'")
+            command_arguments += [f"-Xms{xms_option_value}"]
+
+        if xmx_option_value is not None:
+            print(f"Démarrage de '{dsl_bin_dir_path}' avec l'option '-Xmx{xmx_option_value}'")
+            command_arguments += [f"-Xmx{xmx_option_value}"]
+
+        command_arguments += [
+            r"-Dlog4j.configurationFile=./etc/dsl.log4j.xml",
+            r"-jar", f"./bin/{dsl_jar_path.name}",
+            r"-conf", r"./etc/dsl.json",
+        ]
+
+        if self.singleDslLogFolderPath.exists():
+            shutil.rmtree(self.singleDslLogFolderPath, ignore_errors=True)
+        self.singleDslLogFolderPath.mkdir(parents=True, exist_ok=True)
+
+        dsl_log_file_path = self.logDirPath / self.consoleSingleDslLogFileName
+        with dsl_log_file_path.open("w"):
+            print(f"Détachement du processus...")
+            process = run_detach_subprocess(dsl_log_file_path, command_arguments, current_working_directory=dsl_folder_path)
+            print(f"PID du processus détaché: {process.pid}")
+
+        print(f"Le DSL '{dsl_folder_path}' a été démarré")
+        return True
