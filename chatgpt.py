@@ -2686,3 +2686,104 @@ class SingleDslPel:
             return None
 
         return file_content_as_dict
+    @staticmethod
+    # Écrit un dictionnaire dans un fichier JSON. Renvoie True en cas de succès, False sinon.
+    def _write_dict_to_json_file(input_dict: dict, output_json_file_path: Path) -> bool:
+        try:
+            # Ouvre le fichier JSON en écriture
+            with output_json_file_path.open("w", newline="\n") as json_file:
+                # Écrit le dictionnaire JSON dans le fichier avec une indentation de 4 espaces
+                json.dump(input_dict, json_file, indent=4)
+        except (OSError, TypeError, ValueError, OverflowError) as e:
+            # En cas d'erreur, affiche un message d'erreur et renvoie False
+            print(f"        - L'écriture du JSON dans le fichier '{output_json_file_path}' a échoué : ", e)
+            return False
+        # Renvoie True si l'écriture a réussi
+        return True
+
+    # Fusionne les fichiers JSON DSL de différents dossiers en un seul fichier.
+    def _merge_the_dsl_json_file_from_dsl_folders_into_one_file(self, dsl_json_file_name: str,
+                                                                dsl_definition_files_folder_name: str,
+                                                                dsl_dir_paths: List[Path],
+                                                                dsl_host="127.169.0.0", dsl_port=40000) -> Optional[Tuple[Optional[Path], Optional[List[Path]]]]:
+        # Crée le dossier cible et le chemin du fichier JSON DSL unique
+        dsl_folder_target_path = self.singleDslTargetDirPath / "main-dsl-folder"
+        dsl_json_file_target_dir_path = dsl_folder_target_path / dsl_definition_files_folder_name
+        print(f"- Crée le dossier cible du fichier JSON unique '{dsl_json_file_target_dir_path}'")
+        dsl_json_file_target_dir_path.mkdir(parents=True, exist_ok=True)
+        dsl_json_file_target_path = dsl_json_file_target_dir_path / dsl_json_file_name
+
+        special_dsl_json_file_target_path_list = []
+
+        # Fusionne les fichiers JSON DSL
+        print(f"- Fusionne les fichiers {dsl_json_file_name} de chaque dossier 'DSL/{dsl_definition_files_folder_name}' en un seul fichier"
+              f" {dsl_json_file_name} dans le dossier cible '{dsl_definition_files_folder_name}'")
+        single_dsl_json_dict = {
+            "dsl.host": dsl_host,
+            "dsl.port": dsl_port,
+            "components": [],
+        }
+        for dsl_dir_path_index, dsl_dir_path in enumerate(dsl_dir_paths):
+            dsl_json_file_path = dsl_dir_path / dsl_definition_files_folder_name / dsl_json_file_name
+            dsl_json_dict = self._get_dict_from_json_file(dsl_json_file_path)
+            if dsl_json_dict is None:
+                print(f"   ERREUR : impossible d'obtenir le contenu JSON du fichier DSL JSON '{dsl_json_file_path.relative_to(self.allDslRootDirPath)}'"
+                      f" ! Continuer avec les autres fichiers {dsl_json_file_name}...")
+                continue
+
+            special_single_dsl_json_dict = {
+                "dsl.host": dsl_host,
+                "dsl.port": dsl_port + dsl_dir_path_index + 1,
+                "components": [],
+            }
+
+            # Fusionne les composants dans le fichier JSON DSL unique
+            dsl_json_components = dsl_json_dict.get("components", None)
+            if not isinstance(dsl_json_components, list):
+                print(f"   ERREUR : impossible d'obtenir la liste des composants depuis le fichier JSON DSL '{dsl_json_file_path.relative_to(self.allDslRootDirPath)}'"
+                      f" ! Continuer avec les autres composants dans le fichier {dsl_json_file_name}...")
+                continue
+            for dsl_json_component_index, dsl_json_component in enumerate(dsl_json_components):
+                dsl_json_component_jar = dsl_json_component.get("jar", None)
+                if dsl_json_component_jar is None:
+                    print(f"   ERREUR : impossible d'obtenir le champ 'jar' du composant #{dsl_json_component_index} depuis le fichier JSON DSL"
+                          f" '{dsl_json_file_path.relative_to(self.allDslRootDirPath)}' ! Continuer avec les autres composants dans le fichier {dsl_json_file_name}...")
+                    continue
+
+                dsl_json_component_name = dsl_json_component.get("_name", None)
+                if dsl_json_component_name is None:
+                    print(f"   ERREUR : impossible d'obtenir le champ '_name' du composant #{dsl_json_component_index} depuis le fichier JSON DSL"
+                          f" '{dsl_json_file_path.relative_to(self.allDslRootDirPath)}' ! Continuer avec les autres composants dans le fichier {dsl_json_file_name}...")
+                    continue
+                dsl_json_component_configuration_srv_instance = dsl_json_component.get("configuration", {}).get("srv.instance", None)
+                if dsl_json_component_configuration_srv_instance is None:
+                    print(f"   ERREUR : impossible d'obtenir le champ 'configuration/srv.instance' du composant '{dsl_json_component_name}'"
+                          f" (#{dsl_json_component_name}) depuis le fichier JSON DSL '{dsl_json_file_path.relative_to(self.allDslRootDirPath)}'"
+                          f" ! Continuer avec les autres composants dans le fichier {dsl_json_file_name}...")
+                    continue
+
+                # Construit la chaîne de topologie DSL
+                dsl_topology_str = "..".join(dsl_dir_path.relative_to(self.allDslRootDirPath).parts)
+
+                # Vérifie si les champs "_name" et "srv.instance" sont égaux
+                if dsl_json_component_name != dsl_json_component_configuration_srv_instance:
+                    print(f"   ATTENTION : le composant #{dsl_json_component_index} au nœud '{dsl_topology_str}' a une valeur de champ '_name'"
+                          f" ('{dsl_json_component_name}') différente de la valeur 'srv.instance' ('{dsl_json_component_configuration_srv_instance}')")
+
+                # Met à jour le nom du composant DSL
+                updated_name = f"{dsl_topology_str}..{dsl_json_component_name}"
+                dsl_json_component["_name"] = updated_name
+
+                # Met à jour la configuration srv.instance du composant DSL
+                updated_name = f"{dsl_topology_str}.{dsl_json_component_configuration_srv_instance}"
+                dsl_json_component["configuration"]["srv.instance"] = updated_name
+
+                # Ajoute le composant au fichier JSON DSL unique
+                if dsl_json_component_jar.startswith("bin/generic-snmp") or dsl_json_component_jar.startswith("bin/dio-snmp-mock"):
+                    special_single_dsl_json_dict["components"].append(dsl_json_component)
+                else:
+                    single_dsl_json_dict["components"].append(dsl_json_component)
+
+            if len(special_single_dsl_json_dict["components"]) > 0:
+                # Crée le dossier cible spécial et le chemin du fichier JSON DSL unique
+                special_dsl_folder_target_path = self.singleDslTargetDirPath / f"dsl-folder-{```
