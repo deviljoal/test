@@ -736,3 +736,93 @@ class DeploymentDescriptionCleaner(DeploymentDescriptionParser):
         is_value_updated = False
         return is_value_updated
 
+class DeploymentDescriptionBuilder(DeploymentDescriptionParser):
+
+    # Constructeur de la classe
+    def __init__(self, component_config_dir_path: Path = None):
+        # Appel du constructeur de la classe parente
+        DeploymentDescriptionParser.__init__(self)
+
+        # Initialisation du chemin du répertoire de configuration des composants
+        self.componentConfigDirPath = component_config_dir_path
+
+    # Méthode pour analyser une description de déploiement depuis un fichier JSON et écrire le résultat dans un autre fichier JSON
+    def parse_deployment_description_from_json_file_to_json_file(self, json_file_path_source: Path, deployment_target: str, json_file_path_destination: Path) -> NoReturn:
+        # Extraction du dictionnaire de description de déploiement à partir du fichier source JSON
+        deployment_dict = self._get_dict_from_json_file(json_file_path_source)
+
+        # Ajout de l'étiquette de la cible de déploiement dans le dictionnaire
+        deployment_dict[self.key_words["label_of_the_deployment_target"]] = deployment_target
+
+        # Analyse et nettoyage du dictionnaire de description de déploiement
+        self.parse_deployment_description_dict(deployment_dict)
+
+        # Création du répertoire parent pour le fichier de destination s'il n'existe pas
+        json_file_path_destination.parent.mkdir(parents=True, exist_ok=True)
+        # Suppression du fichier de destination s'il existe déjà
+        if json_file_path_destination.exists():
+            json_file_path_destination.unlink()
+
+        # Nettoyage supplémentaire du dictionnaire de description de déploiement
+        deployment_description_cleaner = DeploymentDescriptionCleaner()
+        deployment_description_cleaner.clean_deployment_description_dict(deployment_dict)
+        # Écriture du dictionnaire nettoyé dans le fichier JSON de destination
+        self._write_dict_to_json_file(deployment_dict, json_file_path_destination)
+
+    # Méthode interne pour traiter le début de la clé
+    def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
+        # Récupération de l'étape parente du chemin
+        parent_path_step = dict_path.get_the_last_step_of_the_path()
+
+        # Suppression de la clé si elle commence par un marqueur de suppression
+        if new_key_in_the_path.startswith("! "):
+            return DictionaryParser.DELETE_THE_KEY
+
+        # Suppression de la partie conditionnelle de la clé si présente
+        if self.key_words["label_of_is_present_test"] in new_key_in_the_path:
+            new_key = self._replace_conditional_key(new_key_in_the_path, dict_path, path_based_dict)
+            if new_key is None:
+                return DictionaryParser.DELETE_THE_KEY
+        else:
+            new_key = self._replace_referenced_key(new_key_in_the_path, dict_path, path_based_dict)
+
+        # Remplacement de la clé avec un template
+        if self.key_words["label_of_a_template_use"] in new_key:
+            new_key = self._replace_templated_key(new_key, dict_path, path_based_dict)
+
+        # Ajout du nom de nœud si nécessaire
+        if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+            for path_step in dict_path.get_dict_path_as_list():
+                if self.key_words["label_of_a_components_group"] in path_step or self.key_words["label_of_a_component_dictionary"] in path_step:
+                    raise UserWarning(f"The '{dict_path}' to the key '{new_key}' contains component group or component dictionary")
+
+            self._add_node_name_key(new_key, dict_path, path_based_dict)
+
+        # Ajout du nom du groupe de composants si nécessaire
+        if new_key.startswith(self.key_words["label_of_a_components_group"]):
+            self._add_component_group_name_key(new_key, dict_path, path_based_dict)
+
+        # Ajout du nom du composant si nécessaire
+        if parent_path_step == self.key_words["label_of_a_component_dictionary"]:
+            if not self.is_a_correct_node_or_component_name(new_key_in_the_path):
+                raise UserWarning(f"The '{dict_path}' key '{new_key}' is not a component name")
+
+            self._add_component_description_name_key(new_key, dict_path, path_based_dict)
+            if self.componentConfigDirPath is not None:
+                self._check_component_description_name_key(new_key, dict_path, path_based_dict)
+
+        return new_key
+
+    # Méthode interne pour traiter la fin de la clé
+    def _process_key_ending(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Ne rien faire à la fin de la clé
+        pass
+
+    # Méthode interne pour traiter la valeur finale
+    def _process_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+        # Aucune mise à jour de valeur n'a été effectuée
+        is_value_updated = False
+        # Remplacement des valeurs de clés référencées
+        is_value_updated |= self._replace_templated_final_value(dict_path, path_based_dict)
+        is_value_updated |= self._replace_referenced_final_value(dict_path, path_based_dict)
+        return is_value_updated
