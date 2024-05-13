@@ -826,3 +826,243 @@ class DeploymentDescriptionBuilder(DeploymentDescriptionParser):
         is_value_updated |= self._replace_templated_final_value(dict_path, path_based_dict)
         is_value_updated |= self._replace_referenced_final_value(dict_path, path_based_dict)
         return is_value_updated
+
+    # Méthode interne pour remplacer une clé référencée
+    def _replace_referenced_key(self, referenced_key: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> str:
+        # Remplacement des références dans la clé
+        new_key = self._replace_references_in_value(referenced_key, dict_path, path_based_dict)
+        # Si la clé reste inchangée, retourner la clé d'origine
+        if new_key == referenced_key:
+            return referenced_key
+
+        # Obtenir le chemin de dictionnaire vers la clé référencée
+        dict_path_to_referenced_key = dict_path.get_the_path_to_a_following_step(referenced_key)
+        # Remplacer la dernière clé du chemin par la nouvelle clé
+        path_based_dict.replace_the_last_key_given_by_a_dict_path(dict_path_to_referenced_key, new_key)
+        return new_key
+
+    # Méthode interne pour remplacer la valeur finale référencée
+    def _replace_referenced_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+        # Récupérer la valeur référencée à partir du chemin du dictionnaire
+        referenced_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+        # Vérifier si la valeur est une chaîne
+        if not isinstance(referenced_value, str):
+            return False
+
+        # Remplacement des références dans la valeur
+        new_value = self._replace_references_in_value(referenced_value, dict_path, path_based_dict)
+        # Si la valeur reste inchangée, retourner False
+        if new_value == referenced_value:
+            return False
+
+        # Définir la nouvelle valeur dans le chemin du dictionnaire
+        path_based_dict.set_the_value_pointed_by_a_dict_path(new_value, dict_path)
+
+        return True
+
+    # Méthode interne pour remplacer une clé avec un modèle
+    def _replace_templated_key(self, templated_key: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> str:
+        # Obtenir le chemin de dictionnaire vers la clé modèle
+        dict_path_to_templated_key = dict_path.get_the_path_to_a_following_step(templated_key)
+        # Récupérer la valeur actuelle de la clé modèle
+        current_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path_to_templated_key)
+        # Extraire le nom de la clé à partir de la clé modèle
+        new_key = templated_key[:templated_key.find(self.key_words["label_of_a_template_use"])]
+        # Extraire le nom du modèle à partir de la clé modèle
+        template_to_use = templated_key[templated_key.find(self.key_words["label_of_a_template_use"]):]
+        template_name = self.key_words["label_of_a_template_definition"] + template_to_use[len(self.key_words["label_of_a_template_use"]):]
+        # Vérifier si le modèle est défini
+        if len(template_name) == 0:
+            raise UserWarning(f"The '{dict_path}' template in key '{templated_key}' not defined")
+
+        # Remplacer les références dans le nom du modèle
+        referenced_template_name = self._replace_references_in_value(template_name, dict_path, path_based_dict)
+
+        # Rechercher la valeur du modèle dans le dictionnaire
+        template_value, _, _ = self._search_from_here_to_the_top_of_the_parameter_value(referenced_template_name, dict_path, path_based_dict)
+        # Vérifier si le modèle est trouvé
+        if template_value is None:
+            raise UserWarning(f"The '{dict_path}' template in key '{templated_key}' not found")
+
+        # Copier la valeur du modèle
+        new_value = copy.deepcopy(template_value)
+
+        # Fusionner les valeurs si les deux sont des dictionnaires
+        if isinstance(new_value, dict) and isinstance(current_value, dict):
+            self._deep_update(new_value, current_value)
+
+        # Remplacer la clé modèle par la nouvelle clé et sa valeur
+        path_based_dict.replace_the_last_key_given_by_a_dict_path(dict_path_to_templated_key, new_key, new_value)
+
+        return new_key
+
+    # Méthode interne pour remplacer la valeur finale avec un modèle
+    def _replace_templated_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+        # Récupérer la valeur finale référencée à partir du chemin du dictionnaire
+        templated_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+        # Vérifier si la valeur est une chaîne et commence par l'étiquette de modèle
+        if not isinstance(templated_value, str) or not templated_value.startswith(f"{self.key_words['label_of_a_template_use']}"):
+            return False
+
+        # Extraire le nom du modèle à partir de la valeur
+        template_to_use = templated_value[templated_value.find(self.key_words["label_of_a_template_use"]):]
+        template_name = self.key_words["label_of_a_template_definition"] + template_to_use[len(self.key_words["label_of_a_template_use"]):]
+        # Vérifier si le modèle est défini
+        if len(template_name) == 0:
+            raise UserWarning(f"The '{dict_path}' template in value '{templated_value}' not defined")
+
+        # Remplacer les références dans le nom du modèle
+        referenced_template_name = self._replace_references_in_value(template_name, dict_path, path_based_dict)
+
+        # Rechercher la valeur du modèle dans le dictionnaire
+        template_value, _, _ = self._search_from_here_to_the_top_of_the_parameter_value(referenced_template_name, dict_path, path_based_dict)
+        # Vérifier si le modèle est trouvé
+        if template_value is None:
+            raise UserWarning(f"The '{dict_path}' template in value '{templated_value}' not found")
+
+        # Copier la valeur du modèle
+        new_value = copy.deepcopy(template_value)
+        # Définir la nouvelle valeur dans le chemin du dictionnaire
+        path_based_dict.set_the_value_pointed_by_a_dict_path(new_value, dict_path)
+
+        return True
+
+    # Méthode interne pour ajouter une clé de nom de nœud
+    def _add_node_name_key(self, node_definition_key: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Obtenir le chemin de dictionnaire vers la clé de définition de nœud
+        dict_path_to_node_definition_key = dict_path.get_the_path_to_a_following_step(node_definition_key)
+        # Récupérer la valeur actuelle de la clé de définition de nœud
+        current_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path_to_node_definition_key)
+        # Vérifier si la valeur est un dictionnaire
+        if not isinstance(current_value, dict):
+            raise UserWarning(f"The '{dict_path}' node '{node_definition_key}' is not a dict as value type")
+
+        # Vérifier si la clé de nom de nœud est déjà définie
+        if self.key_words["label_of_the_node_name"] in current_value.keys():
+            raise UserWarning(f"The '{dict_path}' node '{node_definition_key}' already defined a '{self.key_words['label_of_the_node_name']}'")
+
+        # Ajouter la clé de nom de nœud avec la valeur actuelle dans le dictionnaire
+        new_node_definition_value = {self.key_words["label_of_the_node_name"]: node_definition_key, **current_value}
+        path_based_dict.set_the_value_pointed_by_a_dict_path(new_node_definition_value, dict_path_to_node_definition_key)
+
+    # Méthode interne pour ajouter une clé de nom de groupe de composants
+    def _add_component_group_name_key(self, group_name_definition_key: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Obtenir le chemin de dictionnaire vers la clé de définition de nom de groupe
+        dict_path_to_group_name_definition_key = dict_path.get_the_path_to_a_following_step(group_name_definition_key)
+        # Récupérer la valeur actuelle de la clé de définition de nom de groupe
+        current_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path_to_group_name_definition_key)
+        # Vérifier si la valeur est un dictionnaire
+        if not isinstance(current_value, dict):
+            raise UserWarning(f"The '{dict_path}' component group defined in key '{group_name_definition_key}' has not a dict as value type")
+
+        # Extraire le nom du groupe à partir de la clé de définition de nom de groupe
+        group_name = self._get_group_name_from_definition_key(group_name_definition_key)
+        # Vérifier si le nom du groupe est défini
+        if group_name == "":
+            raise UserWarning(f"The '{dict_path}' component group defined in key '{group_name_definition_key}' has no component group name defined")
+
+        # Vérifier si la clé de nom de groupe de composants est déjà définie
+        if self.key_words["label_of_the_components_group_name"] in current_value:
+            raise UserWarning(f"The '{dict_path}' component group name '{group_name}' already defined a '{self.key_words['label_of_the_components_group_name']}'")
+
+        # Ajouter la clé de nom de groupe de composants avec la valeur actuelle dans le dictionnaire
+        new_group_definition_value = {self.key_words["label_of_the_components_group_name"]: group_name, **current_value}
+        path_based_dict.set_the_value_pointed_by_a_dict_path(new_group_definition_value, dict_path_to_group_name_definition_key)
+
+    # Méthode interne pour ajouter une clé de nom de description de composant
+    def _add_component_description_name_key(self, component_description_definition_key: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Obtenir le chemin de dictionnaire vers la clé de définition de description de composant
+        dict_path_to_component_description_definition_key = dict_path.get_the_path_to_a_following_step(component_description_definition_key)
+        # Récupérer la valeur actuelle de la clé de définition de description de composant
+        current_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path_to_component_description_definition_key)
+        # Vérifier si la valeur est un dictionnaire
+        if not isinstance(current_value, dict):
+            raise UserWarning(f"The '{dict_path}' component description '{component_description_definition_key}' is not a dict as value type")
+
+        # Vérifier si la clé de nom de description de composant est déjà définie
+        if self.key_words["label_of_the_component_description_name"] in current_value.keys():
+            raise UserWarning(f"The '{dict_path}' component description '{component_description_definition_key}' already defined a '{self.key_words['label_of_the_component_description_name']}'")
+
+        # Vérifier si la clé de nom de composant est définie dans le dictionnaire
+        if self.key_words["label_of_the_component_name"] not in current_value.keys():
+            raise UserWarning(f"The '{dict_path}' component description '{component_description_definition_key}' doesn't define a '{self.key_words['label_of_the_component_name']}'")
+
+        # Vérifier si la clé de dictionnaire de variables d'environnement du composant est définie dans le dictionnaire
+        if self.key_words["label_of_a_component_env_var_dictionary"] not in current_value.keys():
+            raise UserWarning(f"The '{dict_path}' component description '{component_description_definition_key}' doesn't define a '{self.key_words['label_of_the_component_name']}'")
+
+        # Ajouter la clé de nom de description de composant avec la valeur actuelle dans le dictionnaire
+        new_component_description_value = {self.key_words["label_of_the_component_description_name"]: component_description_definition_key, **current_value}
+        path_based_dict.set_the_value_pointed_by_a_dict_path(new_component_description_value, dict_path_to_component_description_definition_key)
+
+    # Méthode interne pour vérifier la clé de nom de description de composant
+    def _check_component_description_name_key(self, component_description_definition_key: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Obtenir le chemin de dictionnaire vers la clé de définition de description de composant
+        dict_path_to_component_description_definition_key = dict_path.get_the_path_to_a_following_step(component_description_definition_key)
+        # Récupérer la valeur actuelle de la clé de définition de description de composant
+        current_value = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path_to_component_description_definition_key)
+        # Récupérer le nom du composant référencé
+        component_deployment_name = "/".join(self._get_deployment_path(dict_path))
+
+        # Récupérer le nom du composant
+        component_name = current_value.get(self.key_words["label_of_the_component_name"], None)
+        # Remplacer les références dans le nom du composant
+        referenced_component_name = self._replace_references_in_value(component_name, dict_path_to_component_description_definition_key, path_based_dict)
+        # Récupérer le dictionnaire de variables d'environnement du composant
+        component_env_var_dictionary = current_value.get(self.key_words["label_of_a_component_env_var_dictionary"], None)
+        # Créer une copie du dictionnaire de variables d'environnement du composant sans le mot-clé de test de présence
+        component_env_var_dictionary_without_key_word = {k if self.key_words["label_of_is_present_test"] not in k else k[:k.find(self.key_words["label_of_is_present_test"])]: v for (k, v) in component_env_var_dictionary.items()}
+
+        # Récupérer les valeurs de configuration du composant à partir du fichier equinox.sh
+        equinox_sh_value_by_component_parameter_name, additional_equinox_sh_value_by_component_parameter_name = self._get_component_configuration_from_config_equinox_sh(referenced_component_name)
+
+        # Extraire les paramètres supplémentaires de equinox.sh
+        additional_equinox_sh_parameter = set()
+        for additional_parameters_list in additional_equinox_sh_value_by_component_parameter_name.values():
+            additional_equinox_sh_parameter = additional_equinox_sh_parameter.union(set(additional_parameters_list))
+
+        # Vérifier si le dictionnaire de variables d'environnement du composant contient une clé spécifique
+        if "!!! FILLED AT BUILDING TIME !!!" in component_env_var_dictionary:
+            print(f"     !! Build warning: the '{component_deployment_name}' ('{referenced_component_name}') component description was filled from equinox content")
+
+            # Remplacer les paramètres du composant par ceux de equinox.sh
+            component_parameters_dict = equinox_sh_value_by_component_parameter_name
+
+            for component_parameter, additional_parameters in additional_equinox_sh_value_by_component_parameter_name.items():
+                for additional_parameter in additional_parameters:
+                    component_parameters_dict[additional_parameter] = f"associated to '{component_parameter}'"
+
+            component_env_var_dictionary.clear()
+            component_env_var_dictionary.update(component_parameters_dict)
+        else:
+            # Vérifier les erreurs et avertissements liés aux paramètres du composant
+            for parameter_name in component_env_var_dictionary_without_key_word.keys():
+                if parameter_name not in equinox_sh_value_by_component_parameter_name:
+                    if parameter_name in additional_equinox_sh_parameter:
+                        print(f"     !! Build warning: the '{component_deployment_name}' ('{referenced_component_name}') component description"
+                              f" defines the unexpected environment variable '{parameter_name}' but it seems that it is an additional equinox parameter")
+                    else:
+                        print(f"     !! Build error: the '{component_deployment_name}' ('{referenced_component_name}') component description"
+                              f" defines the unexpected environment variable '{parameter_name}'")
+
+            for parameter_name, parameter_value in equinox_sh_value_by_component_parameter_name.items():
+                if "TO_BE_DEFINED" in parameter_value:
+                    if parameter_name not in component_env_var_dictionary_without_key_word:
+                        print(f"     !! Build error: the '{component_deployment_name}' ('{referenced_component_name}') component description"
+                              f" doesn't define the expected environment variable '{parameter_name}'")
+                else:
+                    if parameter_name in component_env_var_dictionary_without_key_word and str(parameter_value) == str(component_env_var_dictionary_without_key_word[parameter_name]):
+                        print(f"     !! Build warning: the '{component_deployment_name}' ('{referenced_component_name}') component description"
+                              f" define the variable '{parameter_name}' at its default value ('{parameter_value}')")
+
+                    if parameter_name not in component_env_var_dictionary_without_key_word:
+                        component_env_var_dictionary.update({f"DEFAULT VALUE OF '{parameter_name}'": parameter_value})
+
+            for parameter_name in additional_equinox_sh_parameter:
+                if parameter_name not in component_env_var_dictionary_without_key_word:
+                    print(f"     !! Build warning: the '{component_deployment_name}' ('{referenced_component_name}') component description"
+                          f" doesn't define the additional environment variable '{parameter_name}' (often for mock component)")
+
+        # Définir la valeur actuelle dans le chemin du dictionnaire
+        path_based_dict.set_the_value_pointed_by_a_dict_path(current_value, dict_path_to_component_description_definition_key)
+
