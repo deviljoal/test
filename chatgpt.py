@@ -3599,3 +3599,212 @@ class PilRunning(PilDeploymentDescriptionParser):
 
         self._read_the_running_deployment_dict()
         self._set_gan_components_running_status(True)
+        # Vérifie si le processus de copie a échoué
+        if complete_process.returncode != 0:
+            # Affiche un message d'erreur en cas d'échec de la copie des journaux du conteneur
+            print(f"             ! Make a inside copy of the '{container_name}' container logs failed")
+
+        # Affiche l'étape de copie des journaux du conteneur
+        print(f"                 - Make a copy of the logs from the container")
+
+        # Définit le chemin du dossier des journaux du conteneur
+        container_log_folder_path = self.logDirPath / container_name
+        container_log_folder_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Définit les arguments de la commande pour copier les journaux du conteneur
+        command_arguments = ["docker", "cp", f"{container_name}:/tmp_logs/logs", container_log_folder_path]
+
+        # Définit le chemin du fichier journal de la copie des journaux du conteneur
+        log_file_path = self.pilDirPath / f"container-logs-copy.log"
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Exécute la commande pour copier les journaux du conteneur
+        complete_process = run_subprocess(log_file_path, command_arguments, current_working_directory=self.pilDirPath)
+
+        # Vérifie si le processus de copie a échoué
+        if complete_process.returncode != 0:
+            # Affiche un message d'erreur en cas d'échec de la copie des journaux du conteneur
+            print(f"             ! Make a copy of the '{container_name}' container logs failed")
+
+        # Affiche l'étape de suppression du dossier temporaire des journaux à l'intérieur du conteneur
+        print(f"                 - Delete the logs temporary folder inside the container")
+
+        # Définit les arguments de la commande pour supprimer le dossier temporaire des journaux à l'intérieur du conteneur
+        command_arguments = ["docker", "exec", container_name, "/bin/bash", "-c", "rm -R /tmp_logs"]
+
+        # Définit le chemin du fichier journal de la suppression du dossier temporaire des journaux à l'intérieur du conteneur
+        log_file_path = self.pilDirPath / f"container-inside-logs-delete.log"
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Exécute la commande pour supprimer le dossier temporaire des journaux à l'intérieur du conteneur
+        complete_process = run_subprocess(log_file_path, command_arguments, current_working_directory=self.pilDirPath)
+
+        # Vérifie si le processus de suppression a échoué
+        if complete_process.returncode != 0:
+            # Affiche un message d'erreur en cas d'échec de la suppression du dossier temporaire des journaux à l'intérieur du conteneur
+            print(f"             ! Delete the logs temporary folder inside the '{container_name}' container failed")
+
+
+if __name__ == "__main__":
+
+    # Get the script path
+    parameters_dict = {}
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        print("The script is running in a PyInstaller bundle")
+        this_script_dir_path = Path(sys.executable).parent.absolute()
+
+        # Check the presence of a parameters json file
+        parameters_json_path = Path(__file__).resolve().with_name("deployer-parameters.json")
+        if parameters_json_path.exists():
+            try:
+                with parameters_json_path.open("r") as parameters_json_file:
+                    parameters_dict = json.load(parameters_json_file)
+                print(f"The parameters json file give the following parameters: {parameters_dict}")
+            except (OSError, json.JSONDecodeError) as json_exception:
+                print(f"The parameters json file can't be read: {json_exception}")
+    else:
+        print("The script is running in a normal Python process")
+        this_script_dir_path = Path(__file__).parent.absolute()
+
+    print(f"The script parent path is '{this_script_dir_path}'\n")
+
+    # Set umask for folder and file creation
+    new_mask = 0o000
+    old_umask = os.umask(new_mask)
+
+    # Commands requested by the script arguments
+
+    def build_pel(parsed_args):
+        working_folder_path = Path(parsed_args.workingFolderPath)
+        templated_deployment_description_file_path = Path(parsed_args.templatedDeploymentDescriptionFile)
+        if parsed_args.componentConfigFolder == "None":
+            component_config_folder_path = None
+        else:
+            component_config_folder_path = Path(parsed_args.componentConfigFolder)
+        deployment_description_file_path = Path(parsed_args.pelDeploymentDescriptionFile)
+
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+        print(f"     - The templated deployment description json file is '{templated_deployment_description_file_path}'")
+        print(f"     - The component config folder is '{component_config_folder_path}'")
+        print(f"     - The resulting deployment description json file is '{deployment_description_file_path}'")
+
+        deployment_description_builder = DeploymentDescriptionBuilder(component_config_folder_path)
+        deployment_description_builder.parse_deployment_description_from_json_file_to_json_file(templated_deployment_description_file_path, "pel", deployment_description_file_path)
+
+        return 0
+
+    def deploy_pel(parsed_args, deploy_and_start=False):
+        working_folder_path = Path(parsed_args.workingFolderPath)
+        deployment_description_file_path = Path(parsed_args.pelDeploymentDescriptionFile)
+        component_config_folder_path = Path(parsed_args.componentConfigFolder)
+        component_tgz_folder_path = Path(parsed_args.componentTgzFolder)
+
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+        print(f"     - The deployment description json file is '{deployment_description_file_path}'")
+        print(f"     - The component config folder is '{component_config_folder_path}'")
+        print(f"     - The component tgz folder is '{component_tgz_folder_path}'")
+
+        pel_deployer = PelDeployer(working_folder_path, component_config_folder_path, component_tgz_folder_path)
+        pel_deployer.deploy_from_deployment_description_json_file(deployment_description_file_path, remove_start_and_docker_loop_from_equinox_sh=not deploy_and_start)
+
+        if not deploy_and_start:
+            parsed_args.componentDeploymentPath = []    # stop_pel expects this argument
+            stop_pel(parsed_args, make_copy_of_databases_root_folder=True)
+        return 0
+
+    def deploy_and_start_pel(parsed_args):
+        deploy_pel(parsed_args, deploy_and_start=True)
+        return 0
+
+    def _get_pel_running(parsed_args):
+        working_folder_path = Path(parsed_args.workingFolderPath)
+
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+
+        return PelRunning(working_folder_path)
+
+    def start_pel(parsed_args):
+        pel_running = _get_pel_running(parsed_args)
+
+        component_deployment_path = None
+        if len(parsed_args.componentDeploymentPath) > 0:
+            component_deployment_path = parsed_args.componentDeploymentPath[0]
+            print(f"     - The component to start is '{component_deployment_path}'")
+
+        pel_running.start(component_deployment_path)
+        return 0
+
+    def stop_pel(parsed_args, make_copy_of_databases_root_folder=False):
+        pel_running = _get_pel_running(parsed_args)
+
+        component_deployment_path = None
+        if len(parsed_args.componentDeploymentPath) > 0:
+            component_deployment_path = parsed_args.componentDeploymentPath[0]
+            print(f"     - The component to stop is '{component_deployment_path}'")
+
+        pel_running.stop(component_deployment_path)
+        if make_copy_of_databases_root_folder:
+            pel_running.copy_working_databases_data_root_folder_as_original()
+        return 0
+
+    def build_single_dsl_pel(parsed_args):
+        pel_running = _get_pel_running(parsed_args)
+
+        print(f"     - The DSL log XML trace level to use is '{parsed_args.dslLogXmlTraceLevel}'")
+        print(f"     - The DSL log XML max log file size to use is '{parsed_args.dslLogXmlMaxLogFileSize}'")
+
+        pel_running.build_single_dsl_pel(parsed_args.dslLogXmlTraceLevel, parsed_args.dslLogXmlMaxLogFileSize)
+        return 0
+
+    def start_single_dsl_pel(parsed_args):
+        pel_running = _get_pel_running(parsed_args)
+        pel_running.start_single_dsl_pel()
+        return 0
+
+    def stop_single_dsl_pel(parsed_args):
+        pel_running = _get_pel_running(parsed_args)
+        pel_running.stop_single_dsl_pel()
+        return 0
+
+    def restore_pel_databases(parsed_args):
+        pel_running = _get_pel_running(parsed_args)
+        pel_running.restore_working_databases_data_root_folder_from_original()
+        return 0
+
+    def test_pel(parsed_args):
+        pel_running = _get_pel_running(parsed_args)
+
+        cataclysm_folder_path = Path(parsed_args.cataclysmFolder)
+        print(f"     - The cataclysm folder is '{cataclysm_folder_path}'")
+        print(f"     - The test profile is '{parsed_args.testProfile}'")
+
+        test_name_to_run = None
+        if len(parsed_args.testName) > 0:
+            test_name_to_run = parsed_args.testName[0]
+            print(f"     - The test name to run is '{test_name_to_run}'")
+
+        pel_running.test(cataclysm_folder_path, parsed_args.testProfile, test_name_to_run)
+        return 0
+
+    def build_pil(parsed_args):
+        working_folder_path = Path(parsed_args.workingFolderPath)
+        templated_deployment_description_file_path = Path(parsed_args.templatedDeploymentDescriptionFile)
+        if parsed_args.componentConfigFolder == "None":
+            component_config_folder_path = None
+        else:
+            component_config_folder_path = Path(parsed_args.componentConfigFolder)
+        deployment_description_file_path = Path(parsed_args.pilDeploymentDescriptionFile)
+
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+        print(f"     - The templated deployment description json file is '{templated_deployment_description_file_path}'")
+        print(f"     - The component config folder is '{component_config_folder_path}'")
+        print(f"     - The resulting deployment description json file is '{deployment_description_file_path}'")
+
+        deployment_description_builder = DeploymentDescriptionBuilder(component_config_folder_path)
+        deployment_description_builder.parse_deployment_description_from_json_file_to_json_file(templated_deployment_description_file_path, "pil", deployment_description_file_path)
+
+        return 0
