@@ -2923,3 +2923,168 @@ class SingleDslPel:
         if not self._write_log_xml_lines(dsl_log_xml_lines, dsl_log_xml_file_path):
             return False
         return True
+class PilDeploymentDescriptionParser(DeploymentDescriptionDeployer):
+    # Nom du dossier PIL
+    pilFolderName = "pil-target"
+    # Nom du dossier contenant les fichiers Docker
+    pilDockerFileFolderName = "dockerfiles"
+    # Nom du réseau commun PIL
+    pilCommonNetworkName = "pil-common-network"
+    # Nom du dossier de journalisation des déploiements en cours
+    runningDeploymentLogFolderName = "logs"
+    # Clé pour la liste des images Docker utilisées
+    listOfDockerImagesUsedKey = "listOfDockerImagesUsed"
+
+    def __init__(self, deployment_folder_path: Path):
+        # Chemin du dossier PIL
+        self.pilDirPath = deployment_folder_path / self.pilFolderName
+
+        # Appel du constructeur de la classe parente avec le chemin du dossier PIL
+        DeploymentDescriptionDeployer.__init__(self, self.pilDirPath)
+
+        # Chemin des fichiers Docker
+        self.dockerfilesDirPath = self.pilDirPath / self.pilDockerFileFolderName
+        # Chemin du dossier de journalisation
+        self.logDirPath = self.pilDirPath / self.runningDeploymentLogFolderName
+
+        self._deployment_dict = None
+
+    def _get_the_main_parent_component_group_dockercompose_file_path(self, dict_path: DictPath) -> Path:
+        # Méthode pour obtenir le chemin du fichier docker-compose principal du groupe de composants parent
+        main_parent_component_group_dict_path = self._get_main_parent_component_group_dict_path(dict_path)
+        main_parent_component_group_name = self._get_group_name_from_definition_key(main_parent_component_group_dict_path.get_the_last_step_of_the_path())
+        main_parent_component_group_name_for_docker = main_parent_component_group_name.lower()
+        main_parent_component_group_dockercompose_file_path = self.pilDirPath / f"{main_parent_component_group_name_for_docker}.dockercompose"
+        return main_parent_component_group_dockercompose_file_path
+
+    def _get_the_service_name_header(self, dict_path: DictPath) -> str:
+        # Méthode pour obtenir l'en-tête du nom du service
+        parents_component_groups_names = self._get_parents_component_groups_names(dict_path)
+        parents_component_groups_names.reverse()
+        service_name_header = "-".join(parents_component_groups_names)
+        return service_name_header
+
+    def _get_the_component_name_version_environments_variables_and_associated_service_and_container_name(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[str, str, dict, str, str]:
+        # Méthode pour obtenir le nom du composant, la version, les variables d'environnement, le nom du service et le nom du conteneur associés
+        service_name_header = self._get_the_service_name_header(dict_path)
+
+        component_name, components_version = self._get_the_component_name_and_version(dict_path, path_based_dict)
+        gan_docker_images_version_prefix = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerImagesInfo", {}).get("ganDockerImagesVersionPrefix", "")
+        if components_version != "latest":
+            components_version = gan_docker_images_version_prefix + components_version
+
+        component_environment_variables_by_name = self._get_the_component_environments_variables(dict_path, path_based_dict)
+
+        component_description_dict = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+        component_description_name = component_description_dict.get(self.key_words["label_of_the_component_description_name"], None)
+
+        service_name = self._get_component_associated_service_name(service_name_header, component_name, component_description_name, component_environment_variables_by_name).lower()
+        container_name = f"pil-{service_name}"
+
+        return component_name, components_version, component_environment_variables_by_name, service_name, container_name
+
+    @staticmethod
+    def _get_component_associated_service_name(service_header_name: str, component_name: str, component_description_name: str = None,
+                                               component_environments_variables: dict = None) -> str:
+        # Méthode pour obtenir le nom du service associé au composant
+        service_name = f'{service_header_name}'
+        if component_description_name is not None:
+            service_name += f'-{component_description_name}'
+        else:
+            service_name += f'-{component_name}'
+        return service_name
+
+
+class PilDeployer(PilDeploymentDescriptionParser):
+    def __init__(self, deployment_folder_path: Path):
+        # Initialisation de la classe PilDeployer avec le chemin du dossier de déploiement
+        PilDeploymentDescriptionParser.__init__(self, deployment_folder_path)
+
+        self.pilDatabaseComponentName = None
+        self.jaegerComponentName = None
+        self._first_dockercompose_file_path = None
+        self._first_service_by_ip_address_on_all_dockercomposes = None
+        self._main_component_group_dockercompose_final_lines = None
+
+    def deploy_from_deployment_description_json_file(self, deployment_description_json_file_path: Path) -> NoReturn:
+        # Méthode pour déployer à partir du fichier JSON de description du déploiement
+        if self.is_gan_components_running():
+            raise UserWarning(f"Un déploiement est en cours dans le dossier '{self.pilDirPath}', arrêtez-le avant tout déploiement")
+
+        self._deployment_dict = self._get_dict_from_json_file(deployment_description_json_file_path)
+
+        self.pilDatabaseComponentName = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerImagesInfo", {}).get("pilDatabaseComponentName", None)
+        if self.pilDatabaseComponentName is None:
+            raise UserWarning(f"Le nom du composant de base de données PIL n'est pas défini")
+
+        self.jaegerComponentName = self._deployment_dict.get(self.key_words["label_of_a_jaeger_section"], {}).get("dockerImagesInfo", {}).get("jaegerComponentName", None)
+        if self.jaegerComponentName is None:
+            raise UserWarning("Le nom du composant Jaeger n'est pas défini")
+
+        if self.pilDirPath.exists():
+            print(f"     - Suppression de '{self.pilDirPath}'")
+            shutil.rmtree(self.pilDirPath, ignore_errors=True)
+        self.pilDirPath.mkdir(parents=True, exist_ok=True)
+        self.dockerfilesDirPath.mkdir(parents=True, exist_ok=True)
+
+        self._first_dockercompose_file_path = None
+        self._first_service_by_ip_address_on_all_dockercomposes = {}
+        self._parse_the_deployment_description_json_file(deployment_description_json_file_path)
+
+        self._append_pil_network_definition_to_the_first_dockercompose_file()
+        self._set_deployed_status(True)
+
+    def _append_pil_network_definition_to_the_first_dockercompose_file(self) -> NoReturn:
+        # Méthode pour ajouter la définition du réseau PIL au premier fichier docker-compose
+        if self._first_dockercompose_file_path is None:
+            raise UserWarning(f"Aucune construction de docker-compose !")
+
+        pil_network_dict = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("pilNetwork", {})
+        pil_subnet = pil_network_dict.get("subnet", None)
+        if pil_subnet is None:
+            raise UserWarning(f"Le paramètre de réseau PIL 'subnet' n'est pas défini")
+        pil_gateway = pil_network_dict.get("gateway", None)
+        if pil_gateway is None:
+            raise UserWarning(f"Le paramètre de réseau PIL 'gateway' n'est pas défini")
+
+        dockercompose_lines = [
+            f'',
+            f'networks:',
+            f'    {self.pilCommonNetworkName}:',
+            f'        driver: bridge',
+            f'        ipam:',
+            f'            driver: default',
+            f'            config:',
+            f'                - subnet: {pil_subnet}',
+            f'                  gateway: {pil_gateway}',
+            f'',
+        ]
+
+        self._append_file_content(self._first_dockercompose_file_path, dockercompose_lines)
+
+    def _component_group_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Méthode pour démarrer le déploiement du groupe de composants
+        if not self._is_parent_group_is_the_main_parent_group(dict_path):
+            return
+
+        main_parent_component_group_dockercompose_file_path = self._get_the_main_parent_component_group_dockercompose_file_path(dict_path)
+
+        self._main_component_group_dockercompose_final_lines = []
+
+        if self._first_dockercompose_file_path is None:
+            self._first_dockercompose_file_path = main_parent_component_group_dockercompose_file_path
+
+        print(f"         - Lancement d'un déploiement PIL du groupe de composants '{main_parent_component_group_dockercompose_file_path.stem}'"
+              f" et construction du fichier '{main_parent_component_group_dockercompose_file_path.relative_to(self.deploymentDirPath)}'")
+
+        dockercompose_lines = [
+            f'# docker-compose -p pil-{main_parent_component_group_dockercompose_file_path.stem}-compose -f "{main_parent_component_group_dockercompose_file_path.name}" up --build -d',
+            f'# docker-compose -p pil-{main_parent_component_group_dockercompose_file_path.stem}-compose -f "{main_parent_component_group_dockercompose_file_path.name}" down --rmi all  --remove-orphans',
+            f'# docker exec -it pil-{main_parent_component_group_dockercompose_file_path.stem}-[container_type] bash',
+            f'',
+            f'version: "2.1"',
+            f'services:',
+            f'',
+        ]
+
+        self._initialize_file_content(main_parent_component_group_dockercompose_file_path, dockercompose_lines)
