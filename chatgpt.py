@@ -1798,3 +1798,188 @@ class PelDeployer(PelDeploymentDescriptionParser):
         # Retourne le nom du fichier tgz associé au composant
         return f"{gan_project_name}-{gan_version}-{component_name}.tar.gz"
 
+class PelRunning(PelDeploymentDescriptionParser):
+
+    def __init__(self, deployment_folder_path: Path):
+        PelDeploymentDescriptionParser.__init__(self, deployment_folder_path)
+        self._singleDslPel = SingleDslPel(deployment_folder_path)
+        self._actionToBePerformed = None
+        self._runningComponentsCount = None
+
+    def start(self, component_deployment_path: str = None) -> NoReturn:
+        # Démarre les composants Gan
+        if not self.is_gan_components_deployed():
+            print(" - Les composants Gan ne sont pas déployés")
+            return
+
+        if component_deployment_path is not None:
+            if self.is_single_dsl_gan_components_running():
+                print(" - Non disponible pendant qu'un déploiement DSL unique est en cours")
+            else:
+                self._perform_the_action_on_one_component(component_deployment_path, "start")
+                self._set_gan_components_running_status(True)
+        else:
+            if self.is_databases_running():
+                print(" - Les bases de données sont déjà en cours d'exécution")
+            else:
+                self._perform_the_action("start-databases")
+
+                print(" - Pause pendant 30 secondes pour permettre le démarrage des bases de données...")
+                time.sleep(30)
+
+            if self.is_gan_components_running():
+                print(" - Les composants Gan sont déjà en cours d'exécution")
+            else:
+                if self.logDirPath.exists():
+                    shutil.rmtree(self.logDirPath, ignore_errors=True)
+                self.logDirPath.mkdir(parents=True, exist_ok=True)
+
+                self._perform_the_action("start")
+                self._set_gan_components_running_status(True)
+
+    def stop(self, component_deployment_path: str = None) -> NoReturn:
+        # Arrête les composants Gan
+        if self.is_single_dsl_gan_components_running():
+            print(" - Non disponible pendant qu'un déploiement DSL unique est en cours")
+            return
+
+        if component_deployment_path is not None:
+            self._perform_the_action_on_one_component(component_deployment_path, "stop")
+
+            if self._count_the_running_components() == 0:
+                self._set_gan_components_running_status(False)
+        else:
+            if self.is_databases_running():
+                self._perform_the_action("stop-databases")
+                self._set_databases_running_status(False)
+            else:
+                print(" - Aucune base de données à arrêter")
+
+            if not self.is_gan_components_running():
+                print(" - Aucun composant Gan à arrêter")
+            else:
+                self._perform_the_action("stop")
+                self._set_gan_components_running_status(False)
+
+    def _count_the_running_components(self) -> int:
+        # Compte les composants en cours d'exécution
+        self._runningComponentsCount = 0
+        self._actionToBePerformed = "countRunning"
+        self._parse_the_running_deployment_dict()
+        return self._runningComponentsCount
+
+    def _get_components_path_in_description_order(self) -> List[Path]:
+        # Récupère les chemins des composants dans l'ordre de description
+        self._componentsPathInDescriptionOrder = []
+        self._actionToBePerformed = "getComponentsPath"
+        self._parse_the_running_deployment_dict()
+        return self._componentsPathInDescriptionOrder
+
+    def _perform_the_action(self, action: str) -> NoReturn:
+        # Exécute l'action spécifiée sur tous les composants
+        self._actionToBePerformed = action
+
+        self._parse_the_running_deployment_dict()
+        self._write_the_running_deployment_dict_to_json_file()
+
+    def _perform_the_action_on_one_component(self, component_deployment_path: str, action: str) -> NoReturn:
+        # Exécute l'action spécifiée sur un composant
+        self._actionToBePerformed = action
+
+        if not self.logDirPath.exists():
+            self.logDirPath.mkdir(parents=True, exist_ok=True)
+
+        path_base_dict = self._get_the_path_base_running_deployment_dict()
+        _, _, dict_path = self._search_by_deployment_path(component_deployment_path, DictPath(), path_base_dict)
+        if dict_path is None:
+            print(f" ! L'action '{action}' sur le composant '{component_deployment_path}' a échoué, le chemin cible n'est pas trouvé")
+            return
+
+        if dict_path.get_the_path_to_parent().get_the_last_step_of_the_path() != self.key_words["label_of_a_component_dictionary"]:
+            print(f" ! L'action '{action}' sur le composant '{component_deployment_path}' a échoué, le chemin cible n'est pas un composant")
+            return
+
+        self._component_deployment_starting(dict_path, path_base_dict)
+        self._write_the_running_deployment_dict_to_json_file()
+
+    def _component_group_database_deployment(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Déploie ou arrête les bases de données du groupe de composants
+        if self._actionToBePerformed == "start-databases":
+            database_dir_path, _, database_port = self._get_database_folder_path_host_and_port_from_description_dict_path(dict_path, path_based_dict)
+
+            if not DataBase.start_database(database_dir_path, database_port):
+                print(f"     - Le démarrage de la base de données '{database_dir_path.name}' a échoué")
+            else:
+                print(f"     - La base de données '{database_dir_path.name}' est démarrée")
+
+            self._set_databases_running_status(True)
+        elif self._actionToBePerformed == "stop-databases":
+            database_dir_path, _, database_port = self._get_database_folder_path_host_and_port_from_description_dict_path(dict_path, path_based_dict)
+
+            if not DataBase.stop_database(database_dir_path):
+                print(f"     - L'arrêt de la base de données '{database_dir_path.name}' a échoué")
+            else:
+                print(f"     - La base de données '{database_dir_path.name}' est arrêtée")
+
+    # noinspection PyUnusedLocal
+    def _component_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Démarre ou arrête le déploiement d'un composant
+        if self._actionToBePerformed not in ("start", "stop", "countRunning", "getComponentsPath"):
+            return
+
+        component_deployment_name, component_deployment_path = self._get_the_component_deployment_name_and_path(dict_path)
+        subprocess_environment_variables = self._get_the_component_environments_variables_for_subprocess(dict_path, path_based_dict)
+
+        is_component_running_dict_path = dict_path.get_the_path_to_a_following_step(self.isComponentRunning)
+        is_component_running = path_based_dict.get_the_value_pointed_by_a_dict_path(is_component_running_dict_path, default_value=False)
+
+        if self._actionToBePerformed == "countRunning":
+            if is_component_running:
+                self._runningComponentsCount += 1
+            return
+
+        if is_component_running and self._actionToBePerformed == "start":
+            print(f"     - Le composant '{component_deployment_name}' est déjà démarré")
+            return
+
+        if not is_component_running and self._actionToBePerformed == "stop":
+            print(f"     - Le composant '{component_deployment_name}' est déjà arrêté")
+            return
+
+        component_equinox_sh_pid_dict_path = dict_path.get_the_path_to_a_following_step(self.componentEquinoxShPid)
+        component_equinox_sh_pid = path_based_dict.get_the_value_pointed_by_a_dict_path(component_equinox_sh_pid_dict_path, default_value=None)
+        component_launcher_file_path = component_deployment_path / "launcher.sh"
+
+        if self._actionToBePerformed == "getComponentsPath":
+            self._componentsPathInDescriptionOrder.append(component_deployment_path)
+            return
+
+        print(f"     - {self._actionToBePerformed.capitalize()} le composant '{component_deployment_name}', donc exécuter ce fichier de script '{component_launcher_file_path.name} {self._actionToBePerformed}'")
+        command_arguments = ["./" + component_launcher_file_path.name, self._actionToBePerformed]
+        command_arguments = adapt_the_command_arguments_when_using_bash_on_windows(command_arguments)
+
+        log_file_path = self._get_the_component_log_file_path(dict_path) / f"{self._actionToBePerformed}-{self.launcherShLogFileName}"
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        complete_process = run_subprocess(log_file_path, command_arguments, environment_variables=subprocess_environment_variables, current_working_directory=component_launcher_file_path.parent)
+        if complete_process.returncode != 0:
+            print(f"        ! L'action '{self._actionToBePerformed.capitalize()}' sur le composant '{component_deployment_name}' a échoué")
+        else:
+            path_based_dict.set_the_value_pointed_by_a_dict_path(self._actionToBePerformed == "start", dict_path.get_the_path_to_a_following_step(self.isComponentRunning))
+
+        if self._actionToBePerformed == "stop":
+            if component_equinox_sh_pid is not None:
+                print(f"     - Arrêter le processus equinox.sh du composant '{dict_path}' pid {component_equinox_sh_pid}")
+                if platform.system() == "Windows":
+                    # # os.kill(component_equinox_sh_pid, signal.SIGTERM)
+                    log_file_path = self._get_the_component_log_file_path(dict_path) / self.killEquinoxShLogFileName
+                    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                    run_subprocess(log_file_path, ['taskkill', '/F', '/T', '/PID', str(component_equinox_sh_pid)])
+                else:
+                    os.kill(component_equinox_sh_pid, signal.SIGTERM)
+                path_based_dict.delete_the_last_key_given_by_a_dict_path(component_equinox_sh_pid_dict_path)
+
+            if (component_deployment_path / "logs").exists():
+                log_file_dir_path = self._get_the_component_log_file_path(dict_path)
+                log_file_dir_path.parent.mkdir(parents=True, exist_ok=True)
+                print(f"     - Copier les journaux du composant '{component_deployment_name}' vers '{log_file_dir_path.relative_to(self.logDirPath)}'")
+                copy_tree(str(component_deployment_path / "logs"), str(log_file_dir_path), preserve_mode=True)
