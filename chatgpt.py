@@ -303,3 +303,155 @@ class DictionaryParser:
             if self.callback_on_the_value_at_the_end_of_an_analyzed_(dict_path, path_base_dict):
                 self._parse_path_base_dict(path_base_dict, dict_path)
 
+# Classe pour analyser une description de déploiement
+class DeploymentDescriptionParser:
+
+    key_words = {
+        "label_of_the_deployment_target": "--deployment-target--",
+        "label_of_is_present_test": "--isPresent--",
+        "label_of_the_gan_project_name": "--ganProjectName--",
+        "label_of_the_gan_version": "--ganVersion--",
+        "label_of_a_node_dictionary": "--nodesByName--",
+        "label_of_the_node_name": "--nodeName--",
+        "label_of_a_components_group": "--componentsGroup--",
+        "label_of_the_components_group_name": "--groupName--",
+        "label_of_a_component_dictionary": "--componentsByDescriptionName--",
+        "label_of_the_component_description_name": "--componentDescriptionName--",
+        "label_of_the_component_name": "--componentName--",
+        "label_of_a_component_env_var_dictionary": "--componentEnvironmentVariablesByName--",
+        "label_of_a_database_dictionary": "--database--",
+        "label_of_the_database_host": "--databaseHost--",
+        "label_of_the_database_port": "--databasePort--",
+        "label_of_a_template_definition": "--template--",
+        "label_of_a_template_use": "--fromTemplate--",
+        "label_of_an_just_to_differentiate_at_building_time": "--justToDifferentiateAtBuildingTime--",
+        "label_of_a_pel_section": "--pel--",
+        "label_of_a_pil_section": "--pil--",
+        "label_of_a_jaeger_section": "--jaeger--",
+    }
+
+    def __init__(self):
+        self._dictionaryParser = DictionaryParser(self._process_key_starting, self._process_key_ending, self._process_final_value)
+
+    # Méthode pour vérifier si un mot-clé appartient à la classe DeploymentDescriptionParser
+    def is_a_deployment_description_parser_key_word(self, key: str) -> bool:
+        key_words_in_key = [key_word in key for key_word in self.key_words.values()]
+        return True in key_words_in_key
+
+    # Méthode pour vérifier si un nom de noeud ou de composant est correct
+    def is_a_correct_node_or_component_name(self, key: str) -> bool:
+        not_allowed_key_words = list(self.key_words.values())[:]
+        not_allowed_key_words.remove(self.key_words["label_of_is_present_test"])
+        not_allowed_key_words.remove(self.key_words["label_of_a_template_definition"])
+        not_allowed_key_words.remove(self.key_words["label_of_a_template_use"])
+        not_allowed_key_words.remove(self.key_words["label_of_an_just_to_differentiate_at_building_time"])
+
+        key_words_in_key = [key_word in key for key_word in not_allowed_key_words]
+        return not (True in key_words_in_key)
+
+    # Méthode pour analyser un dictionnaire de description de déploiement
+    def parse_deployment_description_dict(self, deployment_dict: dict) -> NoReturn:
+        self._dictionaryParser.parse_dict(deployment_dict)
+
+    # Méthode interne pour gérer le début d'une clé
+    def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
+        raise UserWarning(f"'_process_key_starting' function must be overridden")
+
+    # Méthode interne pour gérer la fin d'une clé
+    def _process_key_ending(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        raise UserWarning(f"'_process_key_ending' function must be overridden")
+
+    # Méthode interne pour gérer la valeur finale
+    def _process_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+        raise UserWarning(f"'_process_final_value' function must be overridden")
+
+    # Méthode interne pour mettre à jour récursivement un dictionnaire
+    def _deep_update(self, original_dict: dict, update_dict: dict) -> dict:
+        for key, value in update_dict.items():
+            if isinstance(value, dict):
+                original_dict[key] = self._deep_update(original_dict.setdefault(key, {}), value)
+            else:
+                original_dict[key] = value
+        return original_dict
+
+    # Méthode interne pour obtenir un dictionnaire à partir d'un fichier JSON
+    @staticmethod
+    def _get_dict_from_json_file(json_file_path: Path) -> dict:
+        try:
+            json_file_lines = []
+            with json_file_path.open("r") as json_file:
+                for line in json_file.readlines():
+                    if not line.lstrip().startswith("//"):
+                        if "    //" in line:
+                            json_file_lines.append(line[:line.find("    //")])
+                        else:
+                            json_file_lines.append(line)
+                file_content_as_dict = json.loads("\n".join(json_file_lines))
+        except (OSError, json.JSONDecodeError) as e:
+            raise UserWarning(f"Load json from file '{json_file_path}' failed: {e}")
+
+        if not isinstance(file_content_as_dict, dict):
+            raise UserWarning(f"Json from file '{json_file_path}' is not a dict ({file_content_as_dict})")
+
+        return file_content_as_dict
+
+    # Méthode interne pour écrire un dictionnaire dans un fichier JSON
+    @staticmethod
+    def _write_dict_to_json_file(input_dict: dict, output_json_file_path: Path) -> NoReturn:
+        try:
+            with output_json_file_path.open("w", newline="\n") as json_file:
+                json.dump(input_dict, json_file, indent=4)
+        except (OSError, TypeError, ValueError, OverflowError) as e:
+            print(f"Write json to file '{output_json_file_path}' failed: ", e)
+            raise UserWarning(f"Write json file '{output_json_file_path}' from dict failed: {e}")
+
+    # Méthode interne pour obtenir le chemin de déploiement
+    def _get_deployment_path(self, dict_path: DictPath) -> List[str]:
+        deployment_path = []
+        for dict_path_step in dict_path.get_dict_path_as_list():
+            if dict_path_step in (self.key_words["label_of_a_node_dictionary"], self.key_words["label_of_a_component_dictionary"], self.key_words["label_of_a_component_env_var_dictionary"]):
+                continue
+            if dict_path_step.startswith(self.key_words["label_of_a_components_group"]):
+                deployment_path.append(self._get_group_name_from_definition_key(dict_path_step))
+                continue
+            deployment_path.append(dict_path_step)
+        deployment_path.reverse()
+        return deployment_path
+
+    # Méthode interne pour obtenir le chemin du dictionnaire parent du noeud
+    def _get_parent_node_dict_path(self, dict_path: DictPath) -> Optional[DictPath]:
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        while not working_dict_path.is_empty():
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            parent_dict_path = working_dict_path.get_the_path_to_parent()
+            if parent_dict_path is not None:
+                parent_path_step = parent_dict_path.get_the_last_step_of_the_path()
+                if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+                    return working_dict_path
+
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return None
+
+    # Méthode interne pour obtenir les noms des noeuds parents
+    def _get_parents_nodes_names(self, dict_path: DictPath) -> Optional[List[str]]:
+        parents_nodes_names = []
+        working_dict_path = DictPath(from_dict_path=dict_path)
+
+        while not working_dict_path.is_empty():
+            while DictPath.is_a_path_step_as_index(working_dict_path.get_the_last_step_of_the_path()):
+                working_dict_path.pop_the_last_step_of_the_path()
+
+            last_path_step = working_dict_path.get_the_last_step_of_the_path()
+            parent_dict_path = working_dict_path.get_the_path_to_parent()
+            if parent_dict_path is not None:
+                parent_path_step = parent_dict_path.get_the_last_step_of_the_path()
+                if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+                    parents_nodes_names.append(last_path_step)
+
+            working_dict_path.pop_the_last_step_of_the_path()
+
+        return parents_nodes_names
