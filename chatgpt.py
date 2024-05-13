@@ -2111,3 +2111,215 @@ class PelRunning(PelDeploymentDescriptionParser):
 
         self._set_test_in_progress_status(False)
 
+class DataBase:
+
+    @staticmethod
+    def create_database(database_data_dir_path: Path) -> bool:
+        # Crée une base de données
+        print(f"    - Créer une base de données dans le dossier '{database_data_dir_path}'...")
+
+        print(f"        - Supprimer si existant et créer le dossier de base de données '{database_data_dir_path}'...")
+        if database_data_dir_path.exists():
+            shutil.rmtree(database_data_dir_path, ignore_errors=True)
+        database_data_dir_path.mkdir(parents=True, exist_ok=True)
+
+        if platform.system() != "Windows" and os.geteuid() == 0:
+            complete_process = subprocess.run(["chown", "postgres:postgres", "-R", str(database_data_dir_path)],
+                                              cwd=None, text=True, capture_output=True)
+            if complete_process.returncode != 0:
+                print(f"Échec de la définition du propriétaire 'postgres:postgres' du dossier'{database_data_dir_path}'")
+                return False
+            else:
+                print(f"Définition du propriétaire 'postgres:postgres' du dossier'{database_data_dir_path}' réussie")
+
+        print(f"        - Initialiser la base de données PostgreSQL dans le dossier '{database_data_dir_path}'...")
+        command_arguments = [
+            "initdb",
+            "--pgdata",
+            f"{database_data_dir_path}",
+            "-U", "postgres",
+        ]
+
+        log_file_path = database_data_dir_path.parent / f"{database_data_dir_path.name}-creation.log"
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if platform.system() != "Windows" and os.geteuid() == 0:
+            subprocess_kwargs = {"user": "postgres"}
+        else:
+            subprocess_kwargs = {}
+        complete_process = run_subprocess(log_file_path, command_arguments, **subprocess_kwargs)
+
+        if complete_process.returncode != 0:
+            print(f"    ! L'initialisation de la base de données dans le dossier '{database_data_dir_path}' a échoué, code de retour {complete_process.returncode}: {complete_process.stderr} - {complete_process.stdout}")
+            return False
+
+        print(f"        - Mettre à jour 'pg_hba.conf'...")
+        pg_hba_conf_file_path = database_data_dir_path / "pg_hba.conf"
+
+        shutil.copy2(str(pg_hba_conf_file_path), str(pg_hba_conf_file_path) + ".backup")
+
+        is_ipv4_local_connections_line = False
+        is_ipv6_local_connections_line = False
+
+        try:
+            with pg_hba_conf_file_path.open("r") as psql_cfg_file:
+                pg_hba_conf_file_lines = psql_cfg_file.readlines()
+        except OSError as e:
+            raise UserWarning(f"Échec de la lecture du contenu du fichier '{pg_hba_conf_file_path}': {e}")
+
+        new_pg_hba_conf_file_lines = []
+        for line in pg_hba_conf_file_lines:
+            line = line.rstrip("\n")
+            line = line.rstrip("\r")
+            if is_ipv4_local_connections_line:
+                new_pg_hba_conf_file_lines.append("host    all             all             all                     trust\n")
+                is_ipv4_local_connections_line = False
+                continue
+            elif is_ipv6_local_connections_line:
+                new_pg_hba_conf_file_lines.append("host    all             all             all                     trust\n")
+                is_ipv6_local_connections_line = False
+                continue
+            elif line.startswith("# IPv4 local connections:"):
+                is_ipv4_local_connections_line = True
+            elif line.startswith("# IPv6 local connections:"):
+                is_ipv6_local_connections_line = True
+            new_pg_hba_conf_file_lines.append(line + "\n")
+
+        try:
+            with pg_hba_conf_file_path.open("w", newline="\n") as psql_cfg_file:
+                psql_cfg_file.writelines(new_pg_hba_conf_file_lines)
+        except OSError as e:
+            raise UserWarning(f"Échec de l'écriture du contenu du fichier '{pg_hba_conf_file_path}': {e}")
+
+        print(f"        - Mettre à jour 'postgresql.conf' pour le système '{platform.system()}'...")
+        postgresql_conf_file_path = database_data_dir_path / "postgresql.conf"
+
+        shutil.copy2(str(postgresql_conf_file_path), str(postgresql_conf_file_path) + ".backup")
+
+        is_windows = (platform.system() == "Windows")
+
+        try:
+            with postgresql_conf_file_path.open("r") as psql_cfg_file:
+                postgres_conf_file_lines = psql_cfg_file.readlines()
+        except OSError as e:
+            raise UserWarning(f"Échec de la lecture du contenu du fichier '{postgresql_conf_file_path}': {e}")
+
+        new_postgres_conf_file_lines = []
+        for line in postgres_conf_file_lines:
+            line = line.rstrip("\n")
+            line = line.rstrip("\r")
+            if line.startswith("#listen_addresses = 'localhost'"):
+                new_postgres_conf_file_lines.append("listen_addresses = '*'			# what IP address(es) to listen on;\n")
+                continue
+            if is_windows and line.startswith("dynamic_shared_memory_type = posix"):
+                new_postgres_conf_file_lines.append("dynamic_shared_memory_type = windows	# the default is the first option\n")
+                continue
+            if not is_windows and line.startswith("dynamic_shared_memory_type = windows"):
+                new_postgres_conf_file_lines.append("dynamic_shared_memory_type = posix	# the default is the first option\n")
+                continue
+            new_postgres_conf_file_lines.append(line + "\n")
+
+        try:
+            with postgresql_conf_file_path.open("w", newline="\n") as psql_cfg_file:
+                psql_cfg_file.writelines(new_postgres_conf_file_lines)
+        except OSError as e:
+            raise UserWarning(f"Échec de l'écriture du contenu du fichier '{postgresql_conf_file_path}': {e}")
+
+        print(f"        - Création de la base de données dans le dossier '{database_data_dir_path}' terminée")
+        return True
+
+    @staticmethod
+    def start_database(database_data_dir_path: Path, database_port: int) -> bool:
+        # Démarre la base de données
+        print(f"Tentative de démarrage de la base de données sur le port {database_port} et dans le dossier de données'{database_data_dir_path}'...")
+        database_log_file_path = database_data_dir_path.parent / f"{database_data_dir_path.name}.log"
+        option_string = f"-F -p {database_port}"
+        command_arguments = [
+            "pg_ctl", "-s", "-w",
+            "-D", f"{database_data_dir_path}",
+            "-l", f"{database_log_file_path}",
+            "-o", option_string,
+            "-U", "postgres",
+            "start"
+        ]
+        if platform.system() != "Windows" and os.geteuid() == 0:
+            complete_process = subprocess.run(command_arguments, user="postgres")
+        else:
+            complete_process = subprocess.run(command_arguments)
+        if complete_process.returncode != 0:
+            print(f"Échec du démarrage de la base de données sur le port {database_port} et dans le dossier de données'{database_data_dir_path}'")
+            return False
+        else:
+            print(f"Démarrage de la base de données sur le port {database_port} et dans le dossier de données'{database_data_dir_path}' réussi")
+
+        return True
+
+    @staticmethod
+    def stop_database(database_data_dir_path: Path) -> bool:
+        # Arrête la base de données
+        print(f"Tentative d'arrêt de la base de données dans le dossier de données'{database_data_dir_path}'...")
+        command_arguments = ["pg_ctl", "-s", "-w", "-D", f"{database_data_dir_path}", "stop"]
+        if platform.system() != "Windows" and os.geteuid() == 0:
+            complete_process = subprocess.run(command_arguments, user="postgres", cwd=None, text=True, capture_output=True)
+        else:
+            complete_process = subprocess.run(command_arguments, cwd=None, text=True, capture_output=True)
+        if complete_process.returncode != 0:
+            print(f"Échec de l'arrêt de la base de données dans le dossier de données'{database_data_dir_path}': {complete_process.stderr} - {complete_process.stdout}")
+            return False
+        else:
+            print(f"Arrêt de la base de données dans le dossier de données'{database_data_dir_path}' réussi")
+        return True
+
+    @staticmethod
+    def save_databases_data_folders(databases_working_root_dir_path: Path, databases_original_root_dir_path: Path) -> bool:
+        # Sauvegarde les dossiers de données des bases de données
+        if not databases_working_root_dir_path.exists():
+            print(f"Le dossier de travail '{databases_working_root_dir_path}' n'existe pas")
+            return False
+
+        if databases_original_root_dir_path.exists():
+            print(f"Supprimer l'existant '{databases_original_root_dir_path}'")
+            shutil.rmtree(databases_original_root_dir_path, ignore_errors=True)
+
+        print(f"Copier le dossier de travail '{databases_working_root_dir_path}' vers '{databases_original_root_dir_path}'")
+        shutil.copytree(str(databases_working_root_dir_path), str(databases_original_root_dir_path))
+
+        return True
+
+    @staticmethod
+    def restore_databases_data_folders(databases_original_root_dir_path: Path, databases_working_root_dir_path: Path) -> bool:
+        # Restaure les dossiers de données des bases de données
+        print(f"Initialiser le dossier de données des bases de données '{databases_working_root_dir_path}'...")
+
+        if not databases_original_root_dir_path.exists():
+            print(f"Le dossier d'origine '{databases_original_root_dir_path}' n'existe pas")
+            return False
+
+        if databases_working_root_dir_path.exists():
+            print(f"Supprimer l'existant '{databases_working_root_dir_path}'")
+            shutil.rmtree(databases_working_root_dir_path, ignore_errors=True)
+
+        print(f"Copier le dossier d'origine '{databases_original_root_dir_path}' vers '{databases_working_root_dir_path}'")
+        shutil.copytree(str(databases_original_root_dir_path), str(databases_working_root_dir_path))
+
+        if platform.system() != "Windows" and os.geteuid() == 0:
+            print(f"Tentative de définir les autorisations '0700' pour le dossier '{databases_working_root_dir_path}'...")
+            complete_process = subprocess.run(["chmod", "0700", "-R", str(databases_working_root_dir_path)], cwd=None,
+                                              text=True, capture_output=True)
+            if complete_process.returncode != 0:
+                print(f"Échec de la définition des autorisations '0700' pour le dossier '{databases_working_root_dir_path}'")
+                return False
+            else:
+                print(f"Définition des autorisations '0700' pour le dossier '{databases_working_root_dir_path}' réussie")
+
+            print(f"Tentative de définir le propriétaire 'postgres:postgres' pour le dossier '{databases_working_root_dir_path}'...")
+            complete_process = subprocess.run(["chown", "postgres:postgres", "-R", str(databases_working_root_dir_path)],
+                                              cwd=None, text=True, capture_output=True)
+            if complete_process.returncode != 0:
+                print(f"Échec de la définition du propriétaire 'postgres:postgres' pour le dossier '{databases_working_root_dir_path}'")
+                return False
+            else:
+                print(f"Définition du propriétaire 'postgres:postgres' pour le dossier '{databases_working_root_dir_path}' réussie")
+
+        print(f"Le dossier de données des bases de données '{databases_working_root_dir_path}' est initialisé")
+        return True
