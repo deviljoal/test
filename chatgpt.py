@@ -1393,3 +1393,201 @@ def _get_component_configuration_from_config_equinox_sh(self, component_name: st
 
         return output_value
 
+class DeploymentDescriptionDeployer(DeploymentDescriptionParser):
+    # Nom du fichier JSON contenant la description du déploiement en cours
+    runningDeploymentDescriptionJsonFileName = "running-deployment.json"
+    # Clé indiquant le statut de déploiement en cours
+    runningDeploymentStatusKey = "deploymentRunningStatus"
+    # Clé indiquant si les composants GAN sont déployés
+    isDeployedKey = "isDeployed"
+    # Clé indiquant si les composants GAN sont en cours d'exécution
+    isGanComponentsRunningKey = "isGanComponentsRunning"
+
+    def __init__(self, deployment_folder_path: Path):
+        DeploymentDescriptionParser.__init__(self)
+
+        # Chemin vers le dossier de déploiement
+        self.deploymentDirPath = deployment_folder_path
+        # Chemin vers le fichier JSON de description du déploiement en cours
+        self.runningDeploymentDescriptionJsonFile = self.deploymentDirPath / self.runningDeploymentDescriptionJsonFileName
+
+    def _parse_the_deployment_description_json_file(self, deployment_description_json_file_path) -> NoReturn:
+        # Analyse du fichier JSON de description du déploiement
+        self._deployment_dict = self._get_dict_from_json_file(deployment_description_json_file_path)
+        self.parse_deployment_description_dict(self._deployment_dict)
+
+    def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
+        key_dict_path = dict_path.get_the_path_to_a_following_step(new_key_in_the_path)
+        parent_path_step = dict_path.get_the_last_step_of_the_path()
+
+        if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+            # Début du déploiement du nœud
+            self._node_deployment_starting(key_dict_path, path_based_dict)
+
+        if new_key_in_the_path.startswith(self.key_words["label_of_a_components_group"]):
+            # Début du groupe de composants
+            self._process_component_group_starting(key_dict_path, path_based_dict)
+        elif parent_path_step == self.key_words["label_of_a_component_dictionary"]:
+            # Début du déploiement du composant
+            self._component_deployment_starting(key_dict_path, path_based_dict)
+
+        return new_key_in_the_path
+
+    def _process_key_ending(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        key_dict_path = dict_path.get_the_path_to_a_following_step(new_key_in_the_path)
+        parent_path_step = dict_path.get_the_last_step_of_the_path()
+
+        if parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+            # Fin du déploiement du nœud
+            self._node_deployment_ending(key_dict_path, path_based_dict)
+
+        if new_key_in_the_path.startswith(self.key_words["label_of_a_components_group"]):
+            # Fin du groupe de composants
+            self._component_group_deployment_ending(key_dict_path, path_based_dict)
+        elif parent_path_step == self.key_words["label_of_a_component_dictionary"]:
+            # Fin du déploiement du composant
+            self._component_deployment_ending(key_dict_path, path_based_dict)
+
+    def _process_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+        # Traitement de la valeur finale
+        is_value_updated = False
+        return is_value_updated
+
+    def _node_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        pass
+
+    def _node_deployment_ending(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        pass
+
+    def _process_component_group_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Début du groupe de composants
+        self._component_group_deployment_starting(dict_path, path_based_dict)
+
+        component_group_dict = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path, default_value={})
+
+        if self.key_words["label_of_a_database_dictionary"] in component_group_dict:
+            # Déploiement de la base de données du groupe de composants
+            self._component_group_database_deployment(dict_path.get_the_path_to_a_following_step(self.key_words["label_of_a_database_dictionary"]), path_based_dict)
+
+    def _component_group_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        pass
+
+    def _component_group_deployment_ending(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        pass
+
+    def _component_group_database_deployment(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        pass
+
+    def _component_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        pass
+
+    def _component_deployment_ending(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        pass
+
+    def _get_database_host_and_port_from_description_dict_path(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[str, int]:
+        # Récupération de l'hôte et du port de la base de données à partir du chemin d'accès du dictionnaire de description
+        database_description_dict = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+
+        database_host = database_description_dict.get(self.key_words["label_of_the_database_host"], None)
+        if database_host is None:
+            raise UserWarning(f"La description de la base de données '{dict_path}' n'a pas défini son hôte de base de données")
+
+        database_port = database_description_dict.get(self.key_words["label_of_the_database_port"], None)
+        if database_port is None:
+            raise UserWarning(f"La description de la base de données '{dict_path}' n'a pas défini son port de base de données")
+
+        return database_host, database_port
+
+    def _get_container_group(self, container_name: str) -> str:
+        # Récupération du groupe de conteneurs
+        return container_name.split("-")[1]
+
+    def _get_from_here_to_the_top_of_the_dict_path_to_the_database_to_use(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> DictPath:
+        _, _, database_to_use_dict_path = self._search_from_here_to_the_top_of_the_parameter_value(self.key_words["label_of_a_database_dictionary"], dict_path, path_based_dict)
+        if database_to_use_dict_path is None:
+            raise UserWarning(f"La base de données à utiliser à partir du chemin d'accès du dictionnaire '{dict_path}' n'est pas trouvée")
+        return database_to_use_dict_path
+
+    def _get_the_gan_project_name(self, path_based_dict: PathBasedDictionary) -> str:
+        # Récupération du nom du projet GAN
+        return path_based_dict.get_the_value_pointed_by_a_dict_path(DictPath(from_dict_path_as_list=[self.key_words["label_of_the_gan_project_name"]]))
+
+    def _get_the_component_name_and_version(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Tuple[str, str]:
+        # Récupération du nom et de la version du composant
+        components_version = path_based_dict.get_the_value_pointed_by_a_dict_path(DictPath(from_dict_path_as_list=[self.key_words["label_of_the_gan_version"]]))
+        component_description_dict = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+        component_description_name = component_description_dict.get(self.key_words["label_of_the_component_description_name"], None)
+        component_name = component_description_dict.get(self.key_words["label_of_the_component_name"], None)
+        if component_name is None:
+            raise UserWarning(f"Le groupe de composants '{dict_path}' n'a pas défini le nom du composant '{component_description_name}'")
+        return component_name, components_version
+
+    def _get_the_component_environments_variables(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> dict:
+        # Récupération des variables d'environnement du composant
+        component_description_dict = path_based_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+        component_environment_variables_by_name = component_description_dict.get(self.key_words["label_of_a_component_env_var_dictionary"], {})
+        component_environment_variables_by_name = {k: json.dumps(v) if not isinstance(v, str) else v for k, v in component_environment_variables_by_name.items() if not k.startswith("DEFAULT VALUE OF")}
+        return component_environment_variables_by_name
+
+    def _get_the_component_environments_variables_for_subprocess(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> dict:
+        # Récupération des variables d'environnement du composant pour un sous-processus
+        component_environment_variables_by_name = self._get_the_component_environments_variables(dict_path, path_based_dict)
+
+        os_env = copy.deepcopy(os.environ)
+        env_to_use = dict(os_env)
+        env_to_use.update(component_environment_variables_by_name)
+
+        return env_to_use
+
+    def is_gan_components_deployed(self) -> bool:
+        # Vérifie si les composants GAN sont déployés
+        return self._get_running_status_from_running_deployment_dict(self.isDeployedKey, default_value=False)
+
+    def is_gan_components_running(self) -> bool:
+        # Vérifie si les composants GAN sont en cours d'exécution
+        return self._get_running_status_from_running_deployment_dict(self.isGanComponentsRunningKey, default_value=False)
+
+    def _set_deployed_status(self, status_value: bool) -> NoReturn:
+        # Définit le statut de déploiement
+        self._set_running_status_to_running_deployment_dict(self.isDeployedKey, status_value)
+
+    def _set_gan_components_running_status(self, status_value: bool) -> NoReturn:
+        # Définit le statut d'exécution des composants GAN
+        self._set_running_status_to_running_deployment_dict(self.isGanComponentsRunningKey, status_value)
+
+    def _parse_the_running_deployment_dict(self) -> NoReturn:
+        # Analyse du dictionnaire de déploiement en cours
+        self._deployment_dict = self._get_dict_from_json_file(self.runningDeploymentDescriptionJsonFile)
+        self.parse_deployment_description_dict(self._deployment_dict)
+
+    def _read_the_running_deployment_dict(self) -> NoReturn:
+        # Lecture du dictionnaire de déploiement en cours
+        self._deployment_dict = self._get_dict_from_json_file(self.runningDeploymentDescriptionJsonFile)
+
+    def _get_the_path_base_running_deployment_dict(self) -> NoReturn:
+        # Récupération du chemin de base du dictionnaire de déploiement en cours
+        self._read_the_running_deployment_dict()
+        return PathBasedDictionary(self._deployment_dict)
+
+    def _write_the_running_deployment_dict_to_json_file(self) -> NoReturn:
+        # Écriture du dictionnaire de déploiement en cours dans un fichier JSON
+        self._write_dict_to_json_file(self._deployment_dict, self.runningDeploymentDescriptionJsonFile)
+
+    def _set_running_status_to_running_deployment_dict(self, running_status_name: str, running_status_value: Any) -> NoReturn:
+        # Définit le statut de déploiement dans le dictionnaire de déploiement en cours
+        self._deployment_dict.setdefault(self.runningDeploymentStatusKey, {})[running_status_name] = running_status_value
+        self._write_the_running_deployment_dict_to_json_file()
+
+    def _get_running_status_from_running_deployment_dict(self, running_status_name: str, default_value=None) -> Optional[Any]:
+        # Récupère le statut de déploiement à partir du dictionnaire de déploiement en cours
+        if self._deployment_dict is not None:
+            return self._deployment_dict.get(self.runningDeploymentStatusKey, {}).get(running_status_name, default_value)
+
+        if not self.runningDeploymentDescriptionJsonFile.exists():
+            return default_value
+
+        self._deployment_dict = self._get_dict_from_json_file(self.runningDeploymentDescriptionJsonFile)
+        status_value = self._deployment_dict.get(self.runningDeploymentStatusKey, {}).get(running_status_name, default_value)
+        self._deployment_dict = None
+
+        return status_value
