@@ -2787,3 +2787,139 @@ class SingleDslPel:
             if len(special_single_dsl_json_dict["components"]) > 0:
                 # Crée le dossier cible spécial et le chemin du fichier JSON DSL unique
                 special_dsl_folder_target_path = self.singleDslTargetDirPath / f"dsl-folder-{```
+            if len(special_single_dsl_json_dict["components"]) > 0:
+                # Crée le dossier cible spécial et le chemin du fichier JSON DSL unique
+                special_dsl_folder_target_path = self.singleDslTargetDirPath / f"dsl-folder-{special_single_dsl_json_dict['dsl.port']}"
+                special_dsl_json_file_target_dir_path = special_dsl_folder_target_path / dsl_definition_files_folder_name
+                print(f"- Crée le dossier cible du fichier JSON DSL spécial '{special_dsl_json_file_target_dir_path}'")
+                special_dsl_json_file_target_dir_path.mkdir(parents=True, exist_ok=True)
+                special_dsl_json_file_target_path = special_dsl_json_file_target_dir_path / dsl_json_file_name
+
+                # Vérifie si l'écriture du dictionnaire spécial dans le fichier JSON a réussi
+                if not self._write_dict_to_json_file(special_single_dsl_json_dict, special_dsl_json_file_target_path):
+                    print(f"   ERREUR : impossible d'écrire le fichier JSON DSL unique '{special_dsl_json_file_target_path}' !")
+                    return None
+
+                # Ajoute le chemin du fichier JSON spécial à la liste
+                special_dsl_json_file_target_path_list.append(special_dsl_json_file_target_path)
+
+        # Écrit le fichier JSON DSL unique dans le dossier cible
+        if not self._write_dict_to_json_file(single_dsl_json_dict, dsl_json_file_target_path):
+            print(f"   ERREUR : impossible d'écrire le fichier JSON DSL unique '{dsl_json_file_target_path}' !")
+            return None
+
+        return dsl_json_file_target_path, special_dsl_json_file_target_path_list
+
+    @staticmethod
+    # Initialise les lignes XML de configuration du fichier de journalisation
+    def _initialise_log_xml_lines() -> List[str]:
+        return [
+            r"""<?xml version="1.0" encoding="UTF-8"?>""",
+            r"""<Configuration>""",
+        ]
+
+    @staticmethod
+    # Ajoute un appendeur aux lignes XML de configuration du fichier de journalisation
+    def _append_appender_to_log_xml_lines(dsl_log_xml_lines: list, log_dir: str, service_name: str, max_log_file_size: int) -> NoReturn:
+        dsl_log_xml_lines.append(f"""        <RollingFile name="{service_name}" fileName="{log_dir}/{service_name}.log" filePattern="{log_dir}/{service_name}-%i.log" >""")
+        dsl_log_xml_lines.append(r"""            <Policies>""")
+        dsl_log_xml_lines.append(f"""               <SizeBasedTriggeringPolicy size="{max_log_file_size}"/>""")
+        dsl_log_xml_lines.append(r"""            </Policies>""")
+        dsl_log_xml_lines.append(r"""            <PatternLayout>""")
+        dsl_log_xml_lines.append(r"""                <Pattern>%d{MM/dd HH:mm:ss.SSS} - %-5level - %replace{%-200msg}{'"password":"[^"]*"'}{'"password":"*****"'} %n</Pattern>""")
+        dsl_log_xml_lines.append(r"""            </PatternLayout>""")
+        dsl_log_xml_lines.append(r"""            <DefaultRolloverStrategy max="10"/>""")
+        dsl_log_xml_lines.append(r"""        </RollingFile>""")
+        dsl_log_xml_lines.append(r"""""")
+
+    @staticmethod
+    # Ajoute un enregistreur aux lignes XML de configuration du fichier de journalisation
+    def _append_logger_to_log_xml_lines(dsl_log_xml_lines: list, service_name: str, namespace: str, trace_level: str) -> NoReturn:
+        dsl_log_xml_lines.append(f"""        <Logger name="{namespace}" level="{trace_level}" additivity="false">""")
+        dsl_log_xml_lines.append(f"""            <AppenderRef ref="{service_name}"/>""")
+        dsl_log_xml_lines.append(r"""        </Logger>""")
+
+    @staticmethod
+    # Écrit les lignes XML de configuration du fichier de journalisation dans un fichier
+    def _write_log_xml_lines(dsl_log_xml_lines: list, dsl_log_xml_path: Path) -> bool:
+        dsl_log_xml_lines.append(r"""        <Root level="WARN">""")
+        dsl_log_xml_lines.append(r"""            <AppenderRef ref="dsl" />""")
+        dsl_log_xml_lines.append(r"""        </Root>""")
+        dsl_log_xml_lines.append(r"""    </Loggers>""")
+        dsl_log_xml_lines.append(r"""</Configuration>""")
+
+        try:
+            # Écrit les lignes XML dans le fichier
+            with dsl_log_xml_path.open("w", newline="\n") as target:
+                target.writelines([f"{line}\n" for line in dsl_log_xml_lines])
+        except (OSError, TypeError, ValueError) as e:
+            print(f"        - Échec de l'écriture du fichier '{dsl_log_xml_path}' : ", e)
+            return False
+
+        return True
+
+    def _build_the_single_dsl_log_xml_file_from_the_single_dsl_json_file(self, dsl_log_xml_file_name: str,
+                                                                         dsl_json_file_path: Path,
+                                                                         trace_level: str = "DEBUG",
+                                                                         max_log_file_size: int = 10240000) -> bool:
+        # Crée le chemin du fichier log4j.xml DSL unique
+        dsl_log_xml_file_path = dsl_json_file_path.parent / dsl_log_xml_file_name
+
+        # Construit le fichier log4j DSL
+        print(f"- Construit le fichier unique {dsl_log_xml_file_name} DSL à partir du fichier DSL unique '{dsl_json_file_path}'")
+        print(f"    - Initialise les lignes du fichier unique {dsl_log_xml_file_name} DSL")
+        dsl_log_xml_lines = self._initialise_log_xml_lines()
+        dsl_json_dict = self._get_dict_from_json_file(dsl_json_file_path)
+        dsl_namespaces_by_service_name = {"dsl": ["dsl"]}
+        if dsl_json_dict is None:
+            print(f"   ERREUR : impossible d'obtenir le contenu JSON du fichier DSL JSON '{dsl_json_file_path}' !")
+            return False
+        for dsl_json_component_index, dsl_json_component in enumerate(dsl_json_dict.get("components", [])):
+            dsl_json_component_enable_status = dsl_json_component.get("enable", True)
+            if not dsl_json_component_enable_status:
+                continue
+
+            dsl_json_component_jar = dsl_json_component.get("jar", None)
+            if dsl_json_component_jar is None:
+                print(f"   ERREUR : impossible d'obtenir le champ 'jar' du composant #{dsl_json_component_index} depuis le fichier JSON DSL '{dsl_json_file_path}' !")
+                return False
+
+            dsl_json_component_name = dsl_json_component.get("_name", None)
+            if dsl_json_component_name is None:
+                print(f"   ERREUR : impossible d'obtenir le champ '_name' du composant #{dsl_json_component_index} depuis le fichier JSON DSL '{dsl_json_file_path}' !")
+                return False
+
+            dsl_json_component_configuration_srv_instance = dsl_json_component.get("configuration", {}).get("srv.instance", None)
+            if dsl_json_component_configuration_srv_instance is None:
+                print(f"   ERREUR : impossible d'obtenir le champ 'configuration/srv.instance' du composant"
+                      f" '{dsl_json_component_name}' (#{dsl_json_component_name}) depuis le fichier JSON DSL '{dsl_json_file_path}' !")
+                return False
+
+            # Construit la liste des composants pour générer les enregistreurs et les appendices
+            # Gestion spéciale pour RM-MOCK
+            elif dsl_json_component_jar.startswith("bin/rm-mock-"):
+                remote_identifier = dsl_json_component.get("configuration", {}).get("remote.identifier", None)
+                if remote_identifier is not None:
+                    dsl_namespaces_by_service_name[dsl_json_component_configuration_srv_instance] = [remote_identifier]
+            # Cas normal
+            else:
+                dsl_namespaces_by_service_name[dsl_json_component_configuration_srv_instance] = [dsl_json_component_configuration_srv_instance]
+
+        # Ajoute les appendices
+        dsl_log_xml_lines.append(r"""    <Appenders>""")
+        for service_name in dsl_namespaces_by_service_name.keys():
+            # print(f"    - Ajoute la configuration du composant '{dsl_json_component_name}' aux lignes du fichier unique {dsl_log_xml_file_name} DSL")
+            self._append_appender_to_log_xml_lines(dsl_log_xml_lines, "logs", service_name, max_log_file_size)
+        dsl_log_xml_lines.append(r"""    </Appenders>""")
+
+        # Ajoute les enregistreurs
+        dsl_log_xml_lines.append(r"""    <Loggers>""")
+        for service_name, namespaces in dsl_namespaces_by_service_name.items():
+            for namespace in namespaces:
+                # Crée les enregistreurs
+                self._append_logger_to_log_xml_lines(dsl_log_xml_lines, service_name, namespace, trace_level)
+
+        print(f"    - Écrit le fichier unique {dsl_log_xml_file_name} DSL '{dsl_log_xml_file_path}'")
+        if not self._write_log_xml_lines(dsl_log_xml_lines, dsl_log_xml_file_path):
+            return False
+        return True
