@@ -3258,3 +3258,113 @@ class PilDeployer(PilDeploymentDescriptionParser):
 
             dockercompose_lines += [f'']
             self._append_file_content(main_parent_component_group_dockercompose_file_path, dockercompose_lines)
+def _create_the_associated_component_pil_dockerfile(self, component_name: str, components_version: str, image_repository: str):
+        # Chemin du fichier Dockerfile associé au composant
+        dockerfile_path = self.dockerfilesDirPath / f"pil-{component_name}.dockerfile"
+
+        # Vérifie si le fichier Dockerfile existe déjà
+        if dockerfile_path.exists():
+            print(f"             - Le fichier Dockerfile associé à '{component_name}' '{dockerfile_path.relative_to(self.deploymentDirPath)}' existe déjà")
+            return
+
+        # Nom complet de l'image Docker associée au composant
+        component_associated_image_name = self._get_component_associated_image_name(component_name, components_version, image_repository)
+
+        # Ajoute l'image utilisée au dictionnaire de déploiement
+        self._deployment_dict.setdefault(self.runningDeploymentStatusKey, {}).setdefault(self.listOfDockerImagesUsedKey, []).append(component_associated_image_name)
+
+        # Lignes de contenu du Dockerfile
+        dockerfile_lines = [
+            f'# docker image ls',
+            f'# docker build -f ./{self.pilDockerFileFolderName}/pil-{component_name}.dockerfile -t pil-{component_name}:TEST ./dockerfiles/',
+            f'# docker image rm pil-{component_name}:TEST',
+            f'# docker run -it --name pil-{component_name}-container --rm pil-{component_name}:TEST bash',
+            f'# docker cp pil-{component_name}-container:/usr/gan-ms/{component_name}/equinox.sh ~/[destination folder]/',
+            f'# docker ps [-a]',
+            f'',
+            f'FROM {component_associated_image_name}',
+            f'',
+        ]
+
+        # Obtient les options Java pour le composant
+        env_java_tool_options = []
+        gan_docker_containers_java_options_xms = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerContainersInfo", {}).get("javaOptionXms", {})
+        jaeger_docker_containers_java_options_xms = self._deployment_dict.get(self.key_words["label_of_a_jaeger_section"], {}).get("dockerContainersInfo", {}).get("javaOptionXms", {})
+
+        # Détermine la valeur Xms des options Java pour le composant
+        if component_name in gan_docker_containers_java_options_xms:
+            component_xms_value : Any = gan_docker_containers_java_options_xms[component_name]
+        elif component_name in jaeger_docker_containers_java_options_xms:
+            component_xms_value : Any = jaeger_docker_containers_java_options_xms[component_name]
+        else:
+            component_xms_value = None
+
+        # Si la valeur Xms est définie, l'ajoute aux options Java
+        if component_xms_value is not None:
+            env_java_tool_options.append("-Xms" + component_xms_value)
+        else:
+            # Si aucune valeur n'est définie pour le composant, utilise la valeur par défaut
+            if "--default--" in gan_docker_containers_java_options_xms:
+                default_xms_value : Any = gan_docker_containers_java_options_xms["--default--"]
+            elif "--default--" in jaeger_docker_containers_java_options_xms:
+                default_xms_value : Any = jaeger_docker_containers_java_options_xms["--default--"]
+            else:
+                default_xms_value = None
+
+            # Si une valeur par défaut est définie, l'ajoute aux options Java
+            if default_xms_value is not None:
+                env_java_tool_options.append("-Xms" + default_xms_value)
+
+        # Détermine la valeur Xmx des options Java pour le composant
+        gan_docker_containers_java_options_xmx = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerContainersInfo", {}).get("javaOptionXmx", {})
+        jaeger_docker_containers_java_options_xmx = self._deployment_dict.get(self.key_words["label_of_a_jaeger_section"], {}).get("dockerContainersInfo", {}).get("javaOptionXmx", {})
+
+        # Si la valeur Xmx est définie, l'ajoute aux options Java
+        if component_name in gan_docker_containers_java_options_xmx:
+            component_xmx_value = gan_docker_containers_java_options_xmx[component_name]
+        elif component_name in jaeger_docker_containers_java_options_xmx:
+            component_xmx_value = jaeger_docker_containers_java_options_xmx[component_name]
+        else:
+            component_xmx_value = None
+
+        # Si une valeur Xmx est définie, l'ajoute aux options Java
+        if component_xmx_value is not None:
+            env_java_tool_options.append("-Xmx" + component_xmx_value)
+        else:
+            # Si aucune valeur n'est définie pour le composant, utilise la valeur par défaut
+            if "--default--" in gan_docker_containers_java_options_xmx:
+                default_xmx_value = gan_docker_containers_java_options_xmx["--default--"]
+            elif "--default--" in jaeger_docker_containers_java_options_xmx:
+                default_xmx_value = jaeger_docker_containers_java_options_xmx["--default--"]
+            else:
+                default_xmx_value = None
+
+            # Si une valeur par défaut est définie, l'ajoute aux options Java
+            if default_xmx_value is not None:
+                env_java_tool_options.append("-Xmx" + default_xmx_value)
+
+        # Si des options Java ont été déterminées, les ajoute au Dockerfile
+        if len(env_java_tool_options) > 0:
+            dockerfile_lines += [
+                f'ENV JAVA_TOOL_OPTIONS "' + ' '.join(env_java_tool_options) + '"',
+                f'',
+            ]
+
+        # Initialise le contenu du fichier Dockerfile
+        self._initialize_file_content(dockerfile_path, dockerfile_lines)
+
+    def _initialize_file_content(self, file_path: Path, content_lines: List[str]) -> NoReturn:
+        try:
+            with file_path.open("w", newline="\n") as target:
+                target.writelines("\n".join(content_lines))
+        except (OSError, TypeError, ValueError) as e:
+            print(f"             - L'écriture du fichier '{file_path.relative_to(self.deploymentDirPath)}' a échoué : ", e)
+            raise UserWarning(f"L'écriture du fichier '{file_path.relative_to(self.deploymentDirPath)}' a échoué : {e}")
+
+    def _append_file_content(self, file_path: Path, content_lines: List[str]) -> NoReturn:
+        try:
+            with file_path.open("a", newline="\n") as target:
+                target.writelines("\n".join(content_lines))
+        except (OSError, TypeError, ValueError) as e:
+            print(f"             - L'ajout au fichier '{file_path.relative_to(self.deploymentDirPath)}' a échoué : ", e)
+            raise UserWarning(f"L'ajout au fichier '{file_path.relative_to(self.deploymentDirPath)}' a échoué : {e}")
