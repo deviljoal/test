@@ -3088,3 +3088,173 @@ class PilDeployer(PilDeploymentDescriptionParser):
         ]
 
         self._initialize_file_content(main_parent_component_group_dockercompose_file_path, dockercompose_lines)
+    def _component_group_deployment_ending(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Méthode pour terminer le déploiement du groupe de composants
+        if not self._is_parent_group_is_the_main_parent_group(dict_path):
+            return
+
+        main_parent_component_group_dockercompose_file_path = self._get_the_main_parent_component_group_dockercompose_file_path(dict_path)
+
+        if len(self._main_component_group_dockercompose_final_lines) > 0:
+            print(f"         - Finalisation du déploiement PIL du groupe de composants '{main_parent_component_group_dockercompose_file_path.stem}'")
+            self._append_file_content(main_parent_component_group_dockercompose_file_path, [''] + self._main_component_group_dockercompose_final_lines)
+
+    def _component_group_database_deployment(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Méthode pour le déploiement de la base de données du groupe de composants
+        service_name_header = self._get_the_service_name_header(dict_path)
+
+        main_parent_component_group_dockercompose_file_path = self._get_the_main_parent_component_group_dockercompose_file_path(dict_path)
+
+        database_host, database_port = self._get_database_host_and_port_from_description_dict_path(dict_path, path_based_dict)
+
+        component_name = self.pilDatabaseComponentName
+        service_name = self._get_component_associated_service_name(service_name_header, component_name).lower()
+
+        gan_context_images_repository_path = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerImagesInfo", {}).get("ganContextImagesRepositoryPath", None)
+        if gan_context_images_repository_path is None:
+            raise UserWarning(f"Le chemin du répertoire des images de contexte PIL gan n'est pas défini")
+
+        pil_database_component_image_version = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerImagesInfo", {}).get("pilDatabaseComponentImageVersion", None)
+        if pil_database_component_image_version is None:
+            raise UserWarning(f"La version du composant de base de données PIL n'est pas définie")
+
+        print(f"             - Création du fichier docker '{component_name}' associé dans le dossier '{self.dockerfilesDirPath.relative_to(self.deploymentDirPath)}'")
+        self._create_the_associated_component_pil_dockerfile(component_name, pil_database_component_image_version, gan_context_images_repository_path)
+
+        print(f"             - Création du service '{service_name}' dans le fichier dockercompose '{main_parent_component_group_dockercompose_file_path.relative_to(self.deploymentDirPath)}'")
+
+        syslog_is_enabled, _, _, _ = self._get_syslog_information(path_based_dict)
+
+        dockercompose_lines = [
+            f'    {service_name}:',
+            f'        image: pil-{service_name}:{pil_database_component_image_version}',
+            f'        container_name: pil-{service_name}',
+            f'        build:',
+            f'            context: ./{self.pilDockerFileFolderName}',
+            f'            dockerfile: pil-{component_name}.dockerfile',
+            f'        environment:',
+            f'            POSTGRES_PASSWORD: "postgres"',
+            f'            POSTGRES_AUTH_USERS: "postgres,atmosphere"',
+            f'            POSTGRES_LISTENING_PORT: "{database_port}"',
+        ]
+
+        dockercompose_lines += self._get_component_network_mode_dockercompose_lines(service_name, database_host)
+
+        dockercompose_lines += [
+            f'        healthcheck:',
+            f'            test: [ "CMD-SHELL", "pg_isready", "-q", "-h", "{database_host}", "-p", "{database_port}", "||", "exit", "1"]',
+            f'            timeout: 30s',
+            f'            interval: 10s',
+            f'            retries: 3',
+            f'        volumes:',
+            f'            - {service_name}:/var/lib/postgresql/data',
+            f'',
+        ]
+
+        self._append_file_content(main_parent_component_group_dockercompose_file_path, dockercompose_lines)
+
+        self._main_component_group_dockercompose_final_lines += [
+            f'volumes:',
+            f'    {service_name}:',
+            f'',
+        ]
+
+    def _component_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Méthode pour le démarrage du déploiement du composant
+        main_parent_component_group_dockercompose_file_path = self._get_the_main_parent_component_group_dockercompose_file_path(dict_path)
+        component_name, components_version, component_environment_variables_by_name, service_name, container_name = self._get_the_component_name_version_environments_variables_and_associated_service_and_container_name(dict_path, path_based_dict)
+
+        jaeger_component_name = self.jaegerComponentName
+        jaeger_component_images_repository_path = self._deployment_dict.get(self.key_words["label_of_a_jaeger_section"], {}).get("dockerImagesInfo", {}).get("ganContextImagesRepositoryPath", None)
+
+        if jaeger_component_images_repository_path is None:
+            raise UserWarning(f"Le chemin du répertoire des images de contexte Jaeger n'est pas défini")
+
+        jaeger_component_image_version = self._deployment_dict.get(self.key_words["label_of_a_jaeger_section"], {}).get("dockerImagesInfo", {}).get("jaegerComponentImageVersion", None)
+
+        if jaeger_component_image_version is None:
+            raise UserWarning(f"La version du composant Jaeger n'est pas définie")
+
+        self._create_the_associated_component_pil_dockerfile(jaeger_component_name, jaeger_component_image_version, jaeger_component_images_repository_path)
+
+        print(f"- Création du service '{service_name}' dans le fichier dockercompose '{main_parent_component_group_dockercompose_file_path.relative_to(self.deploymentDirPath)}'")
+
+        syslog_is_enabled, syslog_host, syslog_port, syslog_app_name_prefix = self._get_syslog_information(path_based_dict)
+
+        gan_component_images_repository_path = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerImagesInfo", {}).get("ganComponentImagesRepositoryPath", None)
+        if gan_component_images_repository_path is None:
+            raise UserWarning(f"Le chemin du répertoire des images de composants PIL gan n'est pas défini")
+
+        self._create_the_associated_component_pil_dockerfile(component_name, components_version, gan_component_images_repository_path)
+
+        print(f"             - Création du service '{service_name}' dans le fichier dockercompose '{main_parent_component_group_dockercompose_file_path.relative_to(self.deploymentDirPath)}'")
+
+        syslog_is_enabled, syslog_host, syslog_port, syslog_app_name_prefix = self._get_syslog_information(path_based_dict)
+
+        dockercompose_lines = [
+            f'    {service_name}:',
+            f'        image: pil-{service_name}:{components_version}',
+            f'        container_name: {container_name}',
+            f'        build:',
+            f'            context: ./{self.pilDockerFileFolderName}',
+            f'            dockerfile: pil-{component_name}.dockerfile',
+            f'        environment:',
+        ]
+
+        for environment_name, environment_value in component_environment_variables_by_name.items():
+            environment_value_to_use = json.dumps(environment_value)
+            dockercompose_lines.append(f'            {environment_name}: {environment_value_to_use}')
+
+        pil_postgres_password = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerImagesInfo", {}).get("pilPostgresPassword", None)
+        if pil_postgres_password is None:
+            raise UserWarning(f"Le mot de passe de l'utilisateur postgres PIL n'est pas défini")
+
+        pil_atmosphere_password = self._deployment_dict.get(self.key_words["label_of_a_pil_section"], {}).get("dockerImagesInfo", {}).get("pilAtmospherePassword", None)
+        if pil_atmosphere_password is None:
+            raise UserWarning(f"Le mot de passe de l'utilisateur atmosphere PIL n'est pas défini")
+
+        if "sqlHost" in component_environment_variables_by_name:
+            dockercompose_lines += [
+                f'            POSTGRES_PASSWORD: "{pil_postgres_password}"',
+                f'            PGPASSWORD: "{pil_postgres_password}"',
+                f'            ATMOSPHERE_PASSWORD: "{pil_atmosphere_password}"',
+            ]
+
+        dockercompose_lines += [f'            SYSLOG_ENABLED: "{str(syslog_is_enabled).lower()}"']
+        if syslog_is_enabled:
+            dockercompose_lines += [
+                f'            SYSLOG_HOST: "{syslog_host}"',
+                f'            SYSLOG_PORT: "{syslog_port}"',
+                f'            SYSLOG_APP_NAME_PREFIX: "{syslog_app_name_prefix}"',
+            ]
+        else:
+            dockercompose_lines += [
+                f'            SYSLOG_HOST: "NOT_USED"',
+                f'            SYSLOG_PORT: "NOT_USED"',
+                f'            SYSLOG_APP_NAME_PREFIX: "NOT_USED"',
+            ]
+
+        component_host = component_environment_variables_by_name.get("host", None)
+        if component_host is None:
+            raise UserWarning(f"Le paramètre 'host' du composant '{dict_path}' n'est pas défini")
+        dockercompose_lines += self._get_component_network_mode_dockercompose_lines(service_name, component_host)
+
+        self._append_file_content(main_parent_component_group_dockercompose_file_path, dockercompose_lines)
+        # Ajouter une dépendance à la base de données pour démarrer le backend après la base de données
+        # (sauf pour le poste de travail qui n'a aucune dépendance à la base de données)
+        if self._get_container_group(container_name) != "workstation":
+            database_dict_path = self._get_from_here_to_the_top_of_the_dict_path_to_the_database_to_use(dict_path, path_based_dict)
+            database_parents_component_groups_names = self._get_parents_component_groups_names(database_dict_path)
+            database_parents_component_groups_names.reverse()
+            database_service_name_header = "-".join(database_parents_component_groups_names)
+
+            dockercompose_lines += [
+                f'        privileged: true',
+                f'        depends_on:',
+                f'            {self._get_component_associated_service_name(database_service_name_header, self.pilDatabaseComponentName)}:',
+                f'                condition: service_healthy',
+                f'',
+            ]
+
+            dockercompose_lines += [f'']
+            self._append_file_content(main_parent_component_group_dockercompose_file_path, dockercompose_lines)
