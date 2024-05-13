@@ -3808,3 +3808,101 @@ if __name__ == "__main__":
         deployment_description_builder.parse_deployment_description_from_json_file_to_json_file(templated_deployment_description_file_path, "pil", deployment_description_file_path)
 
         return 0
+    def deploy_pil(parsed_args):
+        # Récupère le chemin du dossier de travail et le chemin du fichier de description du déploiement PIL
+        working_folder_path = Path(parsed_args.workingFolderPath)
+        deployment_description_file_path = Path(parsed_args.pilDeploymentDescriptionFile)
+
+        # Affiche les arguments du déploiement PIL
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+        print(f"     - The deployment description json file is '{deployment_description_file_path}'")
+
+        # Déploie le PIL à partir du fichier de description de déploiement JSON
+        pil_deployer = PilDeployer(working_folder_path)
+        pil_deployer.deploy_from_deployment_description_json_file(deployment_description_file_path)
+        return 0
+
+    def save_the_basic_docker_images_used_by_the_pil(parsed_args):
+        # Récupère le chemin du dossier de travail
+        working_folder_path = Path(parsed_args.workingFolderPath)
+
+        # Affiche les arguments pour sauvegarder les images Docker de base utilisées par le PIL
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+
+        # Sauvegarde les images Docker de base utilisées par le PIL
+        pil_running = PilRunning(working_folder_path)
+        pil_running.save_the_basic_docker_images_used()
+        return 0
+
+    def load_the_basic_docker_images_used_by_the_pil(parsed_args):
+        # Récupère le chemin du dossier de travail et le chemin du fichier tar.gz contenant les images Docker
+        working_folder_path = Path(parsed_args.workingFolderPath)
+        docker_images_tar_gz_file_path = Path(parsed_args.dockerImagesTarGzFilePath[0])
+
+        # Affiche les arguments pour charger les images Docker de base utilisées par le PIL
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+        print(f"     - The tar.gz file to load is '{docker_images_tar_gz_file_path}'")
+        print(f"     - The 'do not check hash' status is '{parsed_args.doNotCheckHash}'")
+
+        # Charge les images Docker de base utilisées par le PIL
+        pil_running = PilRunning(working_folder_path)
+        pil_running.load_the_basic_docker_images_to_used(docker_images_tar_gz_file_path, do_not_check_the_used_components_hash=parsed_args.doNotCheckHash)
+        return 0
+
+    def remove_the_basic_docker_images_used_by_the_pil(parsed_args):
+        # Récupère le chemin du dossier de travail
+        working_folder_path = Path(parsed_args.workingFolderPath)
+
+        # Affiche les arguments pour supprimer les images Docker de base utilisées par le PIL
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+
+        # Supprime les images Docker de base utilisées par le PIL
+        pil_running = PilRunning(working_folder_path)
+        pil_running.remove_the_basic_docker_images_used()
+        return 0
+
+    def start_pil(parsed_args):
+        # Récupère le chemin du dossier de travail
+        working_folder_path = Path(parsed_args.workingFolderPath)
+
+        # Affiche les arguments pour démarrer le PIL
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+        print(f"     - The keeping intermediate images status is '{parsed_args.keepTheIntermediateImages}'")
+
+        # Démarre le PIL
+        pil_running = PilRunning(working_folder_path)
+        pil_running.start(keep_the_intermediate_images=parsed_args.keepTheIntermediateImages)
+        return 0
+
+    def get_logs_pil(parsed_args):
+        # Récupère le chemin du dossier de travail
+        working_folder_path = Path(parsed_args.workingFolderPath)
+
+        # Affiche les arguments pour obtenir les journaux du PIL
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+
+        # Obtient les journaux du PIL
+        pil_running = PilRunning(working_folder_path)
+        pil_running.logs()
+        return 0
+
+    def stop_pil(parsed_args):
+        # Récupère le chemin du dossier de travail
+        working_folder_path = Path(parsed_args.workingFolderPath)
+
+        # Affiche les arguments pour arrêter le PIL
+        print(f" - The deployer arguments are:")
+        print(f"     - The deployer working folder is '{working_folder_path}'")
+        print(f"     - The keeping intermediate images status is '{parsed_args.keepTheIntermediateImages}'")
+        print(f"     - The 'do not get logs' status is '{parsed_args.doNotGetLogs}'")
+
+        # Arrête le PIL
+        pil_running = PilRunning(working_folder_path)
+        pil_running.stop(keep_the_intermediate_images=parsed_args.keepTheIntermediateImages, do_not_get_logs=parsed_args.doNotGetLogs)
+        return 0
