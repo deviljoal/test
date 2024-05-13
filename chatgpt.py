@@ -1591,3 +1591,102 @@ class DeploymentDescriptionDeployer(DeploymentDescriptionParser):
         self._deployment_dict = None
 
         return status_value
+class PelDeploymentDescriptionParser(DeploymentDescriptionDeployer):
+    # Nom du dossier PEL
+    pelFolderName = "pel-target"
+    # Nom du dossier racine de déploiement en cours
+    runningDeploymentRootFolderName = "deployment"
+    # Nom du dossier racine des bases de données en cours
+    runningDeploymentDatabasesRootFolderName = "pg-data-root"
+    # Nom du dossier racine des bases de données originales en cours
+    runningDeploymentOriginalDatabasesRootFolderName = "pg-data-root-original"
+    # Nom du dossier des journaux de déploiement en cours
+    runningDeploymentLogFolderName = "logs"
+    # PID de equinox-sh
+    componentEquinoxShPid = "equinox-sh-pid"
+    # Clé indiquant si le composant est en cours d'exécution
+    isComponentRunning = "isComponentRunning"
+    # Nom du fichier journal de launcher-sh
+    launcherShLogFileName = "launcher-sh.log"
+    # Nom du fichier journal de equinox-sh
+    equinoxShLogFileName = "equinox-sh.log"
+    # Nom du fichier journal de kill-equinox-sh
+    killEquinoxShLogFileName = "kill-equinox-sh.log"
+    # Clé indiquant si un DSL unique est déployé
+    isSingleDslDeployedKey = "isSingleDslDeployed"
+    # Clé indiquant si les bases de données sont en cours d'exécution
+    isDatabasesRunningKey = "isDatabasesRunning"
+    # Clé indiquant si les composants GAN d'un DSL unique sont en cours d'exécution
+    isSingleDslGanComponentsRunningKey = "isSingleDslGanComponentsRunningKey"
+    # Clé indiquant si un test est en cours
+    isTestInProgressKey = "isTestInProgressKey"
+
+    def __init__(self, deployment_folder_path: Path):
+        # Chemin vers le dossier PEL
+        self.pelDirPath = deployment_folder_path / self.pelFolderName
+
+        DeploymentDescriptionDeployer.__init__(self, self.pelDirPath)
+
+        # Chemin vers le dossier de déploiement en cours
+        self.runningDeploymentPath = self.pelDirPath / self.runningDeploymentRootFolderName
+        # Chemin vers le dossier des bases de données
+        self.databasesDirPath = self.pelDirPath / self.runningDeploymentDatabasesRootFolderName
+        # Chemin vers le dossier des bases de données originales
+        self.originalDatabasesDirPath = self.pelDirPath / self.runningDeploymentOriginalDatabasesRootFolderName
+        # Chemin vers le dossier des journaux
+        self.logDirPath = self.pelDirPath / self.runningDeploymentLogFolderName
+
+        self._deployment_dict = None
+
+    def is_gan_components_single_dsl_deployed(self) -> bool:
+        # Vérifie si les composants GAN d'un DSL unique sont déployés
+        return self._get_running_status_from_running_deployment_dict(self.isSingleDslDeployedKey, default_value=False)
+
+    def is_single_dsl_gan_components_running(self) -> bool:
+        # Vérifie si les composants GAN d'un DSL unique sont en cours d'exécution
+        return self._get_running_status_from_running_deployment_dict(self.isSingleDslGanComponentsRunningKey, default_value=False)
+
+    def is_databases_running(self) -> bool:
+        # Vérifie si les bases de données sont en cours d'exécution
+        return self._get_running_status_from_running_deployment_dict(self.isDatabasesRunningKey, default_value=False)
+
+
+
+class PelDeployer(PelDeploymentDescriptionParser):
+
+    def __init__(self, deployment_folder_path: Path, component_config_dir_path: Path, component_tgz_dir_path: Path):
+        PelDeploymentDescriptionParser.__init__(self, deployment_folder_path)
+
+        # Chemin vers le dossier de configuration des composants
+        self.componentConfigDirPath = component_config_dir_path
+        # Chemin vers le dossier des fichiers tgz des composants
+        self.componentTgzDirPath = component_tgz_dir_path
+
+        self._removeStartAndDockerLoopFromEquinoxSh = None
+
+    def deploy_from_deployment_description_json_file(self, deployment_description_json_file_path: Path, remove_start_and_docker_loop_from_equinox_sh: bool = False) -> NoReturn:
+        # Déploie à partir d'un fichier JSON de description de déploiement
+        if self.is_gan_components_running():
+            raise UserWarning(f"Un déploiement est en cours dans le dossier '{self.pelDirPath}', arrêtez-le avant tout déploiement")
+
+        self._removeStartAndDockerLoopFromEquinoxSh = remove_start_and_docker_loop_from_equinox_sh
+
+        if self.pelDirPath.exists():
+            print(f"     - Suppression de '{self.pelDirPath}'")
+            shutil.rmtree(self.pelDirPath, ignore_errors=True)
+        self.pelDirPath.mkdir(parents=True, exist_ok=True)
+
+        if self.runningDeploymentPath.exists():
+            print(f"     - Suppression de '{self.runningDeploymentPath}'")
+            shutil.rmtree(self.runningDeploymentPath, ignore_errors=True)
+        self.runningDeploymentPath.mkdir(parents=True, exist_ok=True)
+
+        if self.logDirPath.exists():
+            print(f"     - Suppression de '{self.logDirPath}'")
+            shutil.rmtree(self.logDirPath, ignore_errors=True)
+        self.logDirPath.mkdir(parents=True, exist_ok=True)
+
+        self._parse_the_deployment_description_json_file(deployment_description_json_file_path)
+        self._set_deployed_status(True)
+
+    # Méthodes privées...
