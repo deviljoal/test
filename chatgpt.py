@@ -210,4 +210,96 @@ class PathBasedDictionary:
             parent_dict_or_list[key_or_index] = value
         except (TypeError, IndexError, KeyError) as e:
             raise UserWarning(f"Set the value associated to the path '{dict_path}' failed: {e}")
+# Définition de la fonction pour remplacer la dernière clé donnée par un chemin dans un dictionnaire
+def replace_the_last_key_given_by_a_dict_path(self, dict_path: DictPath, new_last_key: str, new_pointed_value: Optional[Any] = None) -> NoReturn:
+    # Récupération de la dernière clé du chemin
+    key = dict_path.get_the_last_step_of_the_path()
+    # Vérification si la dernière étape du chemin est une clé
+    if not DictPath.is_a_path_step_as_key(key):
+        raise UserWarning(f"The path '{dict_path}' last step is not a key")
+    # Récupération du parent du dernier élément du chemin
+    parent_dict = self.get_the_value_pointed_by_a_dict_path(dict_path.get_the_path_to_parent())
+    # Vérification si le parent est un dictionnaire
+    if not isinstance(parent_dict, dict):
+        raise UserWarning(f"The path '{dict_path}' last step parent is not a dict")
+
+    # Sélection de la valeur à utiliser pour la nouvelle clé
+    if new_pointed_value is not None:
+        value = new_pointed_value
+    else:
+        value = self.get_the_value_pointed_by_a_dict_path(dict_path)
+
+    # Récupération de la position de la clé dans le dictionnaire parent
+    key_position = list(parent_dict.keys()).index(key)
+    # Création d'une liste d'items parent en insérant la nouvelle clé à la position appropriée
+    parent_items = list(parent_dict.items())
+    parent_items.insert(key_position, (new_last_key, value))
+    # Création d'un nouveau dictionnaire parent en supprimant l'ancienne clé et en mettant à jour avec la nouvelle liste d'items
+    new_parent_dict = dict(parent_items)
+    new_parent_dict.pop(key, None)
+
+    # Effacement et mise à jour du dictionnaire parent
+    parent_dict.clear()
+    parent_dict.update(new_parent_dict)
+
+# Définition de la fonction pour supprimer la dernière clé donnée par un chemin dans un dictionnaire
+def delete_the_last_key_given_by_a_dict_path(self, dict_path: DictPath) -> NoReturn:
+    # Récupération de la dernière clé du chemin
+    key = dict_path.get_the_last_step_of_the_path()
+    # Vérification si la dernière étape du chemin est une clé
+    if not DictPath.is_a_path_step_as_key(key):
+        raise UserWarning(f"The path '{dict_path}' last step is not a key")
+    # Récupération du parent du dernier élément du chemin
+    parent_dict = self.get_the_value_pointed_by_a_dict_path(dict_path.get_the_path_to_parent())
+    # Vérification si le parent est un dictionnaire
+    if not isinstance(parent_dict, dict):
+        raise UserWarning(f"The path '{dict_path}' last step parent is not a dict")
+
+    # Suppression de la clé du dictionnaire parent
+    parent_dict.pop(key, None)
+
+# Classe pour analyser un dictionnaire
+class DictionaryParser:
+    # Constantes pour les actions sur les clés
+    IGNORE_THE_KEY = "--ignore-the-key--"
+    DELETE_THE_KEY = "--delete-the-key--"
+
+    def __init__(self, callback_on_key_analysis_starting: Callable[[str, DictPath, PathBasedDictionary], Optional[str]],
+                 callback_on_key_analysis_ending: Callable[[str, DictPath, PathBasedDictionary], NoReturn],
+                 callback_on_the_value_at_the_end_of_an_analyzed_path: Callable[[DictPath, PathBasedDictionary], bool]):
+
+        self.callback_on_key_analysis_starting = callback_on_key_analysis_starting
+        self.callback_on_key_analysis_ending = callback_on_key_analysis_ending
+        self.callback_on_the_value_at_the_end_of_an_analyzed_ = callback_on_the_value_at_the_end_of_an_analyzed_path
+
+    # Méthode pour analyser un dictionnaire
+    def parse_dict(self, dict_to_parse: dict):
+        self._parse_path_base_dict(PathBasedDictionary(dict_to_parse))
+
+    # Méthode interne pour analyser un dictionnaire basé sur un chemin
+    def _parse_path_base_dict(self, path_base_dict: PathBasedDictionary, dict_path: DictPath = None) -> NoReturn:
+        if dict_path is None:
+            dict_path = DictPath()
+
+        dict_path_value = path_base_dict.get_the_value_pointed_by_a_dict_path(dict_path)
+
+        if isinstance(dict_path_value, list):
+            for index, value in enumerate(dict_path_value):
+                new_dict_path = dict_path.get_the_path_to_a_following_step(index)
+                self._parse_path_base_dict(path_base_dict, new_dict_path)
+        elif isinstance(dict_path_value, dict):
+            analysed_dict_keys = list(dict_path_value.keys())
+            for key in analysed_dict_keys:
+                new_key = self.callback_on_key_analysis_starting(key, dict_path, path_base_dict)
+                if new_key == self.IGNORE_THE_KEY:
+                    continue
+                if new_key == self.DELETE_THE_KEY:
+                    path_base_dict.delete_the_last_key_given_by_a_dict_path(dict_path.get_the_path_to_a_following_step(key))
+                    continue
+                new_dict_path = dict_path.get_the_path_to_a_following_step(new_key)
+                self._parse_path_base_dict(path_base_dict, new_dict_path)
+                self.callback_on_key_analysis_ending(new_key, dict_path, path_base_dict)
+        else:
+            if self.callback_on_the_value_at_the_end_of_an_analyzed_(dict_path, path_base_dict):
+                self._parse_path_base_dict(path_base_dict, dict_path)
 
