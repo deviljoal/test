@@ -671,3 +671,68 @@ class DeploymentDescriptionParser:
 
         return None, None, None
 
+class DeploymentDescriptionCleaner(DeploymentDescriptionParser):
+
+    # Méthode pour nettoyer le dictionnaire de description de déploiement
+    def clean_deployment_description_dict(self, deployment_description_dict: dict) -> NoReturn:
+        # Appel de la méthode de parsing pour analyser et nettoyer le dictionnaire de description de déploiement
+        self.parse_deployment_description_dict(deployment_description_dict)
+
+    # Méthode interne pour traiter le début de la clé
+    def _process_key_starting(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> Optional[str]:
+        # Récupération du chemin parent et du grand-parent de la clé
+        parent_path_step = dict_path.get_the_last_step_of_the_path()
+        great_parent_path_step = dict_path.get_the_path_to_parent()
+        if great_parent_path_step is not None:
+            great_parent_path_step = great_parent_path_step.get_the_last_step_of_the_path()
+
+        # Suppression de la clé si elle est au plus haut niveau et n'est pas un mot-clé du parseur de description de déploiement
+        if parent_path_step is None:
+            if not self.is_a_deployment_description_parser_key_word(new_key_in_the_path):
+                return DictionaryParser.DELETE_THE_KEY
+
+        # Suppression de la clé si elle est une définition de modèle de composant
+        if self.key_words["label_of_a_template_definition"] in new_key_in_the_path:
+            return DictionaryParser.DELETE_THE_KEY
+
+        # Suppression de la clé si elle est dans le dictionnaire de nœud et n'est pas un mot-clé du parseur de description de déploiement
+        if great_parent_path_step == self.key_words["label_of_a_node_dictionary"]:
+            if not self.is_a_deployment_description_parser_key_word(new_key_in_the_path):
+                return DictionaryParser.DELETE_THE_KEY
+
+        # Suppression de la clé si elle est dans le groupe de composants et n'est pas un mot-clé du parseur de description de déploiement
+        if isinstance(parent_path_step, str) and parent_path_step.startswith(self.key_words["label_of_a_components_group"]):
+            if not self.is_a_deployment_description_parser_key_word(new_key_in_the_path):
+                return DictionaryParser.DELETE_THE_KEY
+
+        # Suppression de la clé si elle est dans le dictionnaire de composant et n'est pas un mot-clé du parseur de description de déploiement
+        if great_parent_path_step == self.key_words["label_of_a_component_dictionary"]:
+            if not self.is_a_deployment_description_parser_key_word(new_key_in_the_path):
+                return DictionaryParser.DELETE_THE_KEY
+
+        # Ignorer la clé si elle est dans la section PEL
+        if parent_path_step == self.key_words["label_of_a_pel_section"]:
+            return DictionaryParser.IGNORE_THE_KEY
+
+        # Ignorer la clé si elle est dans la section PIL
+        if parent_path_step == self.key_words["label_of_a_pil_section"]:
+            return DictionaryParser.IGNORE_THE_KEY
+
+        # Ignorer la clé si elle est dans la section Jaeger
+        if parent_path_step == self.key_words["label_of_a_jaeger_section"]:
+            return DictionaryParser.IGNORE_THE_KEY
+
+        # Conserver la clé
+        return new_key_in_the_path
+
+    # Méthode interne pour traiter la fin de la clé
+    def _process_key_ending(self, new_key_in_the_path: str, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Ne rien faire à la fin de la clé
+        pass
+
+    # Méthode interne pour traiter la valeur finale
+    def _process_final_value(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> bool:
+        # Aucune mise à jour de valeur n'a été effectuée
+        is_value_updated = False
+        return is_value_updated
+
