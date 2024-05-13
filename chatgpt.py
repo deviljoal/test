@@ -1689,4 +1689,112 @@ class PelDeployer(PelDeploymentDescriptionParser):
         self._parse_the_deployment_description_json_file(deployment_description_json_file_path)
         self._set_deployed_status(True)
 
-    # Méthodes privées...
+    def _node_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Démarre le déploiement d'un nœud
+        node_name = dict_path.get_the_last_step_of_the_path()
+        node_deployment_path = self.runningDeploymentPath.joinpath(*self._get_deployment_path(dict_path))
+
+        print(f"     - Création du dossier '{node_name}' dans '{node_deployment_path.relative_to(self.deploymentDirPath)}'")
+        if node_deployment_path.exists():
+            shutil.rmtree(node_deployment_path, ignore_errors=True)
+        node_deployment_path.mkdir(parents=True, exist_ok=True)
+
+    def _component_group_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Démarre le déploiement d'un groupe de composants
+        component_group_deployment_name = "/".join(self._get_deployment_path(dict_path))
+        component_group_deployment_path = self.runningDeploymentPath.joinpath(*self._get_deployment_path(dict_path))
+
+        print(f"         - Effectuer un déploiement PEL du groupe de composants '{component_group_deployment_name}' dans le dossier '{component_group_deployment_path.relative_to(self.deploymentDirPath)}'")
+        if component_group_deployment_path.exists():
+            shutil.rmtree(component_group_deployment_path, ignore_errors=True)
+        component_group_deployment_path.mkdir(parents=True, exist_ok=True)
+
+    def _component_group_database_deployment(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Démarre le déploiement d'une base de données du groupe de composants
+        database_dir_path, _, database_port = self._get_database_folder_path_host_and_port_from_description_dict_path(dict_path, path_based_dict)
+
+        if not DataBase.create_database(database_dir_path):
+            raise UserWarning(f"La création de la base de données '{database_dir_path.name}' a échoué")
+
+        print(f"         - La création de la base de données '{database_dir_path.name}' est terminée")
+
+        if not DataBase.start_database(database_dir_path, database_port):
+            raise UserWarning(f"Le démarrage de la base de données '{database_dir_path.name}' sur le port '{database_port}' a échoué")
+
+        print(f"         - La base de données '{database_dir_path.name}' sur le port '{database_port}' est démarrée")
+
+        self._set_databases_running_status(True)
+
+    def _component_deployment_starting(self, dict_path: DictPath, path_based_dict: PathBasedDictionary) -> NoReturn:
+        # Démarre le déploiement d'un composant
+        component_deployment_name, component_deployment_path = self._get_the_component_deployment_name_and_path(dict_path)
+        subprocess_environment_variables = self._get_the_component_environments_variables_for_subprocess(dict_path, path_based_dict)
+        component_name, components_version = self._get_the_component_name_and_version(dict_path, path_based_dict)
+        gen_project_name = self._get_the_gan_project_name(path_based_dict)
+
+        print(f"             - Création du composant '{component_deployment_name}' dans le dossier '{component_deployment_path.relative_to(self.deploymentDirPath)}'")
+        component_tgz_name = self._get_component_associated_tgz_name(component_name, components_version, gen_project_name)
+        print(f"                 - Décompression du fichier tgz associé au composant '{component_tgz_name}'")
+        tgz_file_path = self.componentTgzDirPath / component_tgz_name
+        if not tgz_file_path.exists() or not tarfile.is_tarfile(tgz_file_path):
+            raise UserWarning(f"Le fichier tgz du composant '{tgz_file_path.relative_to(self.componentTgzDirPath)}' n'existe pas ou n'est pas un fichier tar")
+        try:
+            with tarfile.open(tgz_file_path, "r:gz") as tar:
+                tar.extractall(component_deployment_path)
+        except (OSError, tarfile.TarError) as e:
+            raise UserWarning(f"Échec de l'extraction du fichier tgz '{tgz_file_path.relative_to(self.componentTgzDirPath)}': {e}")
+
+        component_equinox_source_file_path = self.componentConfigDirPath / component_name / "equinox.sh"
+        component_equinox_destination_file_path = component_deployment_path / "equinox.sh"
+
+        if self._removeStartAndDockerLoopFromEquinoxSh:
+            print(f"                 - Copie d'une version tronquée du fichier de script associé au composant '{component_equinox_source_file_path.relative_to(self.componentConfigDirPath)}'")
+            sh_file_lines = []
+            try:
+                with component_equinox_source_file_path.open("r") as sh_file:
+                    for line in sh_file.readlines():
+                        if not line.lstrip().startswith("./launcher.sh start"):
+                            sh_file_lines.append(line)
+                        else:
+                            break
+            except OSError as e:
+                raise UserWarning(f"Échec de chargement du contenu du fichier '{component_equinox_source_file_path.relative_to(self.componentConfigDirPath)}': {e}")
+
+            try:
+                with component_equinox_destination_file_path.open("w", newline="\n") as sh_file:
+                    sh_file.writelines(sh_file_lines)
+                # Restauration des autorisations du fichier
+                os.chmod(component_equinox_destination_file_path, 0o777)
+            except OSError as e:
+                raise UserWarning(f"Échec de l'écriture du contenu du fichier '{component_equinox_destination_file_path.relative_to(self.deploymentDirPath)}': {e}")
+        else:
+            print(f"                 - Copie du fichier de script associé au composant '{component_equinox_source_file_path.relative_to(self.componentConfigDirPath)}'")
+            shutil.copy2(str(component_equinox_source_file_path), str(component_equinox_destination_file_path))
+
+        print(f"                 - Exécution du fichier de script '{component_equinox_destination_file_path.relative_to(self.deploymentDirPath)}'")
+        command_arguments = ["./" + component_equinox_destination_file_path.name]
+        command_arguments = adapt_the_command_arguments_when_using_bash_on_windows(command_arguments)
+
+        log_file_path = self._get_the_component_log_file_path(dict_path) / self.equinoxShLogFileName
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._removeStartAndDockerLoopFromEquinoxSh:
+            run_subprocess(log_file_path, command_arguments,
+                           environment_variables=subprocess_environment_variables,
+                           current_working_directory=component_equinox_destination_file_path.parent)
+        else:
+            self._set_gan_components_running_status(True)
+
+            print(f"                     - Détacher le processus...")
+            process = run_detach_subprocess(log_file_path, command_arguments, environment_variables=subprocess_environment_variables, current_working_directory=component_equinox_destination_file_path.parent)
+
+            print(f"                     - ID du processus détaché : {process.pid}")
+            path_based_dict.set_the_value_pointed_by_a_dict_path(process.pid, dict_path.get_the_path_to_a_following_step(self.componentEquinoxShPid))
+
+            path_based_dict.set_the_value_pointed_by_a_dict_path(True, dict_path.get_the_path_to_a_following_step(self.isComponentRunning))
+
+    @staticmethod
+    def _get_component_associated_tgz_name(component_name: str, gan_version: str, gan_project_name) -> str:
+        # Retourne le nom du fichier tgz associé au composant
+        return f"{gan_project_name}-{gan_version}-{component_name}.tar.gz"
+
