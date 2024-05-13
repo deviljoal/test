@@ -2458,3 +2458,231 @@ class SingleDslPel:
 
         print(f"Le DSL '{dsl_folder_path}' a été démarré")
         return True
+    # Méthode pour arrêter tous les DSL individuels
+    def stop_single_dsl(self) -> bool:
+        # Initialisation du suivi des échecs
+        has_some_failures = False
+        # Récupération des dossiers DSL individuels
+        single_dsl_folders = self.singleDslTargetDirPath.glob(f"*dsl-folder*")
+        # Parcours de chaque dossier pour arrêter le DSL
+        for single_dsl_folder in single_dsl_folders:
+            # Si l'arrêt du DSL échoue, marquer l'échec
+            if not self.stop_dsl(single_dsl_folder):
+                has_some_failures = True
+        return has_some_failures
+
+    # Méthode pour arrêter un DSL individuel
+    def stop_dsl(self, dsl_folder_path: Path) -> bool:
+        import requests
+
+        print(f"Arrêt du DSL '{dsl_folder_path}'...")
+
+        # Chemin du fichier de configuration du DSL
+        dsl_conf_path = dsl_folder_path / "etc" / "dsl.json"
+        try:
+            # Chargement du fichier JSON de configuration du DSL
+            with dsl_conf_path.open("r") as json_file:
+                dsl_conf_dict = json.load(json_file)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"    ! Échec du chargement du JSON depuis le fichier '{dsl_conf_path}': ", e)
+            return False
+
+        # Vérification si le JSON chargé est un dictionnaire
+        if not isinstance(dsl_conf_dict, dict):
+            print(f"    ! Le JSON du fichier '{dsl_conf_path}' n'est pas un dictionnaire ({dsl_conf_dict})")
+            return False
+
+        # Récupération de l'hôte et du port du DSL depuis le JSON chargé
+        dsl_host = dsl_conf_dict.get("dsl.host", None)
+        dsl_port = dsl_conf_dict.get("dsl.port", None)
+
+        # Vérification de l'existence et de la validité de l'hôte et du port
+        if dsl_host is None or dsl_port is None:
+            print(f"    ! Impossible de récupérer l'hôte ou le port correct du DSL dans le dictionnaire ({dsl_conf_dict})")
+            return False
+
+        # Tentative d'envoi de la requête POST pour arrêter le DSL
+        print(f"    - Tentative d'envoi sur l'URL 'http://{dsl_host}:{dsl_port}/api/v1/stop'...")
+        try:
+            r = requests.post(f"http://{dsl_host}:{dsl_port}/api/v1/stop", json=None)
+        except requests.exceptions.RequestException as e:
+            print(f"    Échec de l'envoi de la requête POST:", e)
+        else:
+            # Vérification de la réponse de la requête POST
+            if r.status_code == requests.codes.ok:
+                print(f"    - Requête POST réussie: {r.status_code}")
+            else:
+                print(f"    - Échec de la requête POST: {r.status_code}")
+                # TODO: tuer le processus ?
+
+        # Copie des logs du DSL individuel dans le dossier dédié
+        print(f"    - Copie des logs du DSL individuel vers '{self.singleDslLogFolderPath}'")
+        single_dsl_logs_folder_path = dsl_folder_path / "logs"
+        single_dsl_log_files_path = list(single_dsl_logs_folder_path.glob(f"**/*.log"))
+        for single_dsl_log_file_path in single_dsl_log_files_path:
+            log_file_name_parts = single_dsl_log_file_path.name.split("..")
+            target_log_file_path = self.singleDslLogFolderPath.joinpath(*log_file_name_parts)
+            print(f"        - Copie du fichier log du DSL individuel '{single_dsl_log_file_path}' vers '{target_log_file_path}'")
+            target_log_file_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copy2(str(single_dsl_log_file_path), str(target_log_file_path))
+            except OSError as e:
+                print(f"            ! Échec de la copie : {e}")
+
+        return True
+
+    # Méthode statique pour vérifier si le dossier DSL est complet
+    @staticmethod
+    def check_dsl_folder_is_complete(dsl_dir_path: Path) -> bool:
+        is_complete = (dsl_dir_path / "etc" / "dsl.json").is_file()
+        is_complete &= (dsl_dir_path / "etc" / dsl_log_file).is_file()
+        is_complete &= (dsl_dir_path / "bin").is_dir()
+        is_complete &= (dsl_dir_path / "lib").is_dir()
+        return is_complete
+
+    # Méthode pour lister les DSL dans un dossier
+    def list_the_dsl_in_folder(self) -> List[Path]:
+        # Récupération des chemins des dossiers binaires DSL complets
+        bin_folder_parent_results = sorted([p.parent for p in list(self.allDslRootDirPath.glob(f"**/bin")) if p.is_dir()])
+        # Filtrage pour ne garder que les dossiers DSL complets
+        dsl_results = [p for p in bin_folder_parent_results if self.check_dsl_folder_is_complete(p)]
+        print(f"- Dossiers DSL dans le dossier racine des DSL:")
+        for result_path in dsl_results:
+            print(f"    - {result_path.relative_to(self.allDslRootDirPath)}")
+        return dsl_results
+
+    # Méthode pour fusionner les fichiers JAR des dossiers DSL dans un seul dossier
+    def _merge_the_jar_files_from_dsl_folders_into_one_folder(self, jar_files_folder_name: str, dsl_dir_paths: List[Path]) -> NoReturn:
+        # Création du dossier cible
+        jar_files_target_dir_path = self.singleDslTargetDirPath / "main-dsl-folder" / jar_files_folder_name
+        print(f"- Création du dossier cible pour les fichiers JAR '{jar_files_target_dir_path}'")
+        jar_files_target_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Fusion des fichiers
+        print(f"- Fusion des fichiers JAR de chaque dossier 'DSL/{jar_files_folder_name}' dans le dossier cible '{jar_files_folder_name}'")
+        exiting_jar_full_names: List[str] = []
+        exiting_jar_versions_by_name: Dict[str, List[str]] = {}
+        for dsl_dir_path in dsl_dir_paths:
+            jar_path_results: List[Path] = list((dsl_dir_path / jar_files_folder_name).glob(f"./*.jar"))
+            for jar_path in jar_path_results:
+                jar_full_name = jar_path.name
+
+                if jar_full_name not in exiting_jar_full_names:
+                    # Mémorisation du nom complet du JAR
+                    exiting_jar_full_names.append(jar_full_name)
+
+                    # Copie du fichier JAR dans le dossier cible
+                    shutil.copy2(str(jar_path), str(jar_files_target_dir_path))
+
+                    # Récupération du nom et de la version du JAR
+                    jar_nam_and_version_pattern = "^(?P<jar_name>(?:(?!-\d).)*)(-(?P<jar_version>\d+(?:(?!\.jar)\.\w+)*(?:-SNAPSHOT)*)|(\.jar))"
+                    jar_name_and_version_math = re.match(jar_nam_and_version_pattern, jar_full_name)
+                    if jar_name_and_version_math is None:
+                        print(f"   ERROR: impossible de récupérer le nom et la version du JAR '{jar_path.relative_to(self.allDslRootDirPath)}' ! Aucune vérification supplémentaire...")
+                        continue
+
+                    jar_name = jar_name_and_version_math.group("jar_name")
+                    jar_version = jar_name_and_version_math.group("jar_version")
+                    if jar_name is None:
+                        print(f"   ERROR: impossible de récupérer le nom du JAR '{jar_path.relative_to(self.allDslRootDirPath)}' ! Aucune vérification supplémentaire...")
+                        continue
+
+                    if jar_version is None:
+                        jar_version = "non défini"
+
+                    # Vérification de la présence de SNAPSHOT dans la version du JAR
+                    if isinstance(jar_version, str) and "SNAPSHOT" in jar_version:
+                        print(f"   ATTENTION: le JAR '{jar_path.relative_to(self.allDslRootDirPath)}' est en version SNAPSHOT !")
+
+                    # Vérification de la présence du JAR dans une autre version
+                    if jar_name in exiting_jar_versions_by_name.keys():
+                        print(f"   ATTENTION: le JAR '{jar_path.relative_to(self.allDslRootDirPath)}' est présent dans une autre version !")
+
+                    # Mémorisation de la version du JAR par son nom
+                    exiting_jar_versions_by_name.setdefault(jar_name, []).append(jar_version)
+
+        # Affichage des versions utilisées des fichiers JAR
+        print(f"    - Résumé des versions utilisées des fichiers JAR par nom de fichier :")
+        for jar_name, jar_versions in exiting_jar_versions_by_name.items():
+            print(f"        - '{jar_name}' avec les versions : {jar_versions}")
+
+    # Méthode pour fusionner les fichiers de ressources des dossiers DSL dans un seul dossier
+    def _merge_the_resources_files_from_dsl_folders_into_one_folder(self, resources_files_folder_name: str,
+                                                                    dsl_dir_paths: List[Path]) -> NoReturn:
+        # Création du dossier cible
+        resources_files_target_dir_path = self.singleDslTargetDirPath / "main-dsl-folder" / resources_files_folder_name
+        print(f"- Création du dossier cible pour les fichiers de ressources '{resources_files_target_dir_path}'")
+        resources_files_target_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Fusion des fichiers
+        print(f"- Fusion des fichiers de ressources de chaque dossier 'DSL/{resources_files_folder_name}' dans le dossier cible '{resources_files_folder_name}'")
+        exiting_resource_relative_paths: List[Path] = []
+        for dsl_dir_path in dsl_dir_paths:
+            resource_file_path_results: List[Path] = [p for p in list((dsl_dir_path / resources_files_folder_name).glob(f"**/*"))if p.is_file()]
+            for resource_path in resource_file_path_results:
+                resource_relative_path = resource_path.relative_to(dsl_dir_path / resources_files_folder_name)
+
+                if resource_relative_path not in exiting_resource_relative_paths:
+                    # Mémorisation du chemin relatif des ressources
+                    exiting_resource_relative_paths.append(resource_relative_path)
+
+                    # Copie du fichier de ressources dans le dossier cible
+                    resource_file_target_dir_path = resources_files_target_dir_path / resource_relative_path.parent
+                    if not resource_file_target_dir_path.exists():
+                        print(f"    - Création du dossier de ressources '{resource_file_target_dir_path.relative_to(self.singleDslTargetDirPath)}'")
+                        resource_file_target_dir_path.mkdir(parents=True, exist_ok=True)
+                    print(f"    - Copie du fichier '{resource_path.relative_to(self.allDslRootDirPath)}' vers le dossier cible"
+                          f" '{resource_file_target_dir_path.relative_to(self.singleDslTargetDirPath)}'")
+                    shutil.copy2(str(resource_path), str(resource_file_target_dir_path))
+
+    # Méthode pour fusionner les fichiers autres que ceux de définition du DSL dans un seul dossier
+    def _merge_the_files_other_than_the_dsl_definition_files_from_dsl_folders_into_one_folder(self, dsl_definition_file_names: List[str],
+                                                                                              dsl_definition_files_folder_name: str,
+                                                                                              dsl_dir_paths: List[Path]) -> NoReturn:
+        # Création du dossier cible
+        resources_files_target_dir_path = self.singleDslTargetDirPath / "main-dsl-folder" / dsl_definition_files_folder_name
+        print(f"- Création du dossier cible pour les fichiers de définition du DSL '{dsl_definition_files_folder_name}'")
+        resources_files_target_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Fusion des fichiers
+        print(f"- Fusion des fichiers de ressources de chaque dossier 'DSL/{dsl_definition_files_folder_name}' dans le dossier cible '{resources_files_target_dir_path}'")
+        exiting_resource_relative_paths: List[Path] = []
+        for dsl_dir_path in dsl_dir_paths:
+            resource_file_path_results: List[Path] = [p for p in list(
+                (dsl_dir_path / dsl_definition_files_folder_name).glob(f"**/*")) if
+                                                      p.is_file() and p.name not in dsl_definition_file_names]
+            for resource_path in resource_file_path_results:
+                resource_relative_path = resource_path.relative_to(dsl_dir_path / dsl_definition_files_folder_name)
+
+                if resource_relative_path not in exiting_resource_relative_paths:
+                    # Mémorisation du chemin relatif des ressources
+                    exiting_resource_relative_paths.append(resource_relative_path)
+
+                    # Copie du fichier de ressources dans le dossier cible
+                    resource_file_target_dir_path = resources_files_target_dir_path / resource_relative_path.parent
+                    if not resource_file_target_dir_path.exists():
+                        print(f"    - Création du dossier de ressources '{resource_file_target_dir_path.relative_to(self.singleDslTargetDirPath)}'")
+                        resource_file_target_dir_path.mkdir(parents=True, exist_ok=True)
+                    print(f"    - Copie du fichier '{resource_path.relative_to(self.allDslRootDirPath)}' vers le dossier cible"
+                          f" '{resource_file_target_dir_path.relative_to(self.singleDslTargetDirPath)}'")
+                    shutil.copy2(str(resource_path), str(resource_file_target_dir_path))
+                else:
+                    print(f"   ATTENTION: le nom de fichier des ressources '{resource_path.relative_to(self.allDslRootDirPath)}' existe déjà dans le dossier cible !")
+
+    # Méthode statique pour obtenir un dictionnaire à partir d'un fichier JSON
+    @staticmethod
+    def _get_dict_from_json_file(json_file_path: Path) -> Optional[dict]:
+        try:
+            # Chargement du fichier JSON en tant que dictionnaire
+            with json_file_path.open("r") as json_file:
+                file_content_as_dict = json.load(json_file)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"        - Échec du chargement du JSON depuis le fichier '{json_file_path}' : ", e)
+            return None
+
+        # Vérification si le contenu chargé est un dictionnaire
+        if not isinstance(file_content_as_dict, dict):
+            print(f"        - Échec du chargement du JSON depuis le fichier '{json_file_path}' : le JSON lu n'est pas un dictionnaire ({file_content_as_dict})")
+            return None
+
+        return file_content_as_dict
