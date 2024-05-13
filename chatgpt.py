@@ -1801,6 +1801,7 @@ class PelDeployer(PelDeploymentDescriptionParser):
 class PelRunning(PelDeploymentDescriptionParser):
 
     def __init__(self, deployment_folder_path: Path):
+        # Initialise la classe PelRunning
         PelDeploymentDescriptionParser.__init__(self, deployment_folder_path)
         self._singleDslPel = SingleDslPel(deployment_folder_path)
         self._actionToBePerformed = None
