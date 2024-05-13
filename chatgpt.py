@@ -3906,3 +3906,269 @@ if __name__ == "__main__":
         pil_running = PilRunning(working_folder_path)
         pil_running.stop(keep_the_intermediate_images=parsed_args.keepTheIntermediateImages, do_not_get_logs=parsed_args.doNotGetLogs)
         return 0
+    # Default script arguments values by destination parameter name
+    default_working_folder_path = this_script_dir_path / "deployer-working-folder"
+    default_templated_deployment_description_file = this_script_dir_path / "deployment-template.json"
+    default_deployment_description_base_file_name = "deployment-description.json"
+    default_pel_deployment_description_file = default_working_folder_path / f"pel-{default_deployment_description_base_file_name}"
+    default_pil_deployment_description_file = default_working_folder_path / f"pil-{default_deployment_description_base_file_name}"
+    args_default_value_by_destination_parameter_name = {
+        "workingFolderPath": default_working_folder_path,
+        "templatedDeploymentDescriptionFile": default_deployment_description_base_file_name,
+        "pelDeploymentDescriptionFile": default_pel_deployment_description_file,
+        "pilDeploymentDescriptionFile": default_pil_deployment_description_file,
+        "dslLogXmlTraceLevel": "DEBUG",
+        "dslLogXmlMaxLogFileSize": 10240000,
+    }
+    # Merge with frozen parameters
+    args_default_value_by_destination_parameter_name.update(parameters_dict)
+
+    # Special for build command as it is not mandatory
+    default_component_config_folder_for_build_command = "None"
+    if "componentConfigFolder" in args_default_value_by_destination_parameter_name:
+        default_component_config_folder_for_build_command = args_default_value_by_destination_parameter_name["componentConfigFolder"]
+
+    # Parse the script arguments
+    common_parser = argparse.ArgumentParser(add_help=False)
+    destination_parameter_name = "workingFolderPath"
+    common_parser.add_argument("--working-folder", dest=destination_parameter_name, type=str,
+                               help=f"Deployer working directory, by default '{args_default_value_by_destination_parameter_name[destination_parameter_name]}'",
+                               default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+
+    common_pel_deployment_parser = argparse.ArgumentParser(add_help=False)
+    destination_parameter_name = "pelDeploymentDescriptionFile"
+    common_pel_deployment_parser.add_argument(dest=destination_parameter_name, metavar='DEPLOYMENT-JSON-FILE', type=str, nargs="?",
+                                              help=f"PEL deployment description json file, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                                              default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    destination_parameter_name = "componentConfigFolder"
+    if destination_parameter_name in args_default_value_by_destination_parameter_name:
+        common_pel_deployment_parser.add_argument("--component-config-folder", dest=destination_parameter_name, type=str,
+                                                  help=f"Component config file directory ('[gan project]/config'), by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                                                  default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    else:
+        common_pel_deployment_parser.add_argument("--component-config-folder", dest=destination_parameter_name, type=str, required=True,
+                                                  help=f"Component config file directory ('[gan project]/config')")
+    destination_parameter_name = "componentTgzFolder"
+    if destination_parameter_name in args_default_value_by_destination_parameter_name:
+        common_pel_deployment_parser.add_argument("--component-tgz-folder", dest=destination_parameter_name, type=str,
+                                                  help=f"Component tgz file directory ('[gan project]/target/distrib'), by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                                                  default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    else:
+        common_pel_deployment_parser.add_argument("--component-tgz-folder", dest=destination_parameter_name, type=str, required=True,
+                                                  help=f"Component tgz file directory ('[gan project]/target/distrib')")
+
+    # noinspection PyTypeChecker
+    parser = argparse.ArgumentParser(description="Deployer",
+                                     usage="The deployer allows:\n   "
+                                           "      - build a deployment description file from a template description file\n"
+                                           "         - deploy as specified by this deployment description file\n"
+                                           "         - start and stop this deployment\n"
+                                           "\n"
+                                           "       And this for several target deployments: PEL and PIL.\n"
+                                           "\n"
+                                           "       For the PEL target, it allows to build a 'single DSL' deployment from\n"
+                                           "       the standard PEL deployment and to start/stop it.\n"
+                                           "\n"
+                                           "       Description template --build[target]--> Final description --deploy--> Deployment result based on target"
+                                           "\n"
+                                           "       From the PEL stage deployed --build-single-dsl-pel--> Single DSL deployment"
+                                           "\n"
+                                           "       If you choose the 'deploy-and-start-pel' option, there is no initial copy of the database,\n"
+                                           "       so you cannot use the 'restore-pel' option to restore the database contents to its initial state."
+                                           "\n",
+                                     epilog="You can use one of the above commands with '--help' to get specific information, for example 'build --help'.",
+                                     formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, width=150, max_help_position=150))
+
+    subparsers = parser.add_subparsers(help="", dest="subparser_name", metavar="")
+
+    help_string = "Build the PEL deployment description json file from templated description json file."
+    subparser = subparsers.add_parser("build-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    destination_parameter_name = "templatedDeploymentDescriptionFile"
+    subparser.add_argument(dest=destination_parameter_name, metavar='TEMPLATE-DEPLOYMENT-JSON-FILE', type=str, nargs="?",
+                           help=f"Template deployment description json file, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                           default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    destination_parameter_name = "componentConfigFolder"
+    subparser.add_argument("--component-config-folder", dest=destination_parameter_name, type=str,
+                           help=f"Component config file directory ('[gan project]/config'), by default '{default_component_config_folder_for_build_command}'. 'None' to avoid using the equinox.sh parameter check",
+                           default=default_component_config_folder_for_build_command)
+    destination_parameter_name = "pelDeploymentDescriptionFile"
+    subparser.add_argument("--deployment-description-result-file", dest=destination_parameter_name, metavar='DEPLOYMENT-JSON-FILE', type=str,
+                           help=f"PEL deployment description result json file, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                           default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    subparser.set_defaults(func=build_pel)
+
+    help_string = "Make a PEL deployment from description json file."
+    subparser = subparsers.add_parser("deploy-pel", parents=[common_parser, common_pel_deployment_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=deploy_pel)
+
+    help_string = "Make a PEL deployment from description json file and start it."
+    subparser = subparsers.add_parser("deploy-and-start-pel", parents=[common_parser, common_pel_deployment_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=deploy_and_start_pel)
+
+    help_string = "Start PEL deployment."
+    subparser = subparsers.add_parser("start-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.add_argument(dest="componentDeploymentPath", metavar='COMPONENT_DEPLOYMENT_PATH', type=str, nargs="*",
+                           help=f"Component deployment path to the component to start, by default all components are started")
+    subparser.set_defaults(func=start_pel)
+
+    help_string = "Stop PEL deployment."
+    subparser = subparsers.add_parser("stop-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.add_argument(dest="componentDeploymentPath", metavar='COMPONENT_DEPLOYMENT_PATH', type=str, nargs="*",
+                           help=f"Component deployment path to the component to stop, by default all components are started")
+    subparser.set_defaults(func=stop_pel)
+
+    help_string = "Build a single DSL PEL from an existing PEL deployment."
+    subparser = subparsers.add_parser("build-single-dsl-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    destination_parameter_name = "dslLogXmlTraceLevel"
+    subparser.add_argument("--dsl-log-xml-trace-level", dest=destination_parameter_name, type=str,
+                           help=f"DSLs log4j.xml trace level, by default '{args_default_value_by_destination_parameter_name[destination_parameter_name]}'",
+                           default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    destination_parameter_name = "dslLogXmlMaxLogFileSize"
+    subparser.add_argument("--dsl-log-xml-max-log-file-size", dest=destination_parameter_name, type=int,
+                           help=f"DSLs log4j.xml max log file size, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                           default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    subparser.set_defaults(func=build_single_dsl_pel)
+
+    help_string = "Start a single DSL PEL."
+    subparser = subparsers.add_parser("start-single-dsl-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=start_single_dsl_pel)
+
+    help_string = "Stop a single DSL PEL."
+    subparser = subparsers.add_parser("stop-single-dsl-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=stop_single_dsl_pel)
+
+    help_string = "Restore the PEL databases data as original if it is existing."
+    subparser = subparsers.add_parser("restore-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=restore_pel_databases)
+
+    help_string = "Test PEL deployment."
+    subparser = subparsers.add_parser("test-pel", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    destination_parameter_name = "cataclysmFolder"
+    if destination_parameter_name in args_default_value_by_destination_parameter_name:
+        subparser.add_argument("--cataclysm-folder", dest=destination_parameter_name, type=str,
+                               help=f"Cataclysm directory ('cataclysm-[gan project]'), by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                               default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    else:
+        subparser.add_argument("--cataclysm-folder", dest=destination_parameter_name, type=str, required=True,
+                               help=f"Cataclysm directory ('cataclysm-[gan project]')")
+    destination_parameter_name = "testProfile"
+    if destination_parameter_name in args_default_value_by_destination_parameter_name:
+        subparser.add_argument("--test-profile", dest=destination_parameter_name, type=str,
+                               help=f"Test profile, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                               default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    else:
+        subparser.add_argument("--test-profile", dest=destination_parameter_name, type=str, required=True,
+                               help=f"Test profile")
+    subparser.add_argument(dest="testName", metavar='TEST_NAME', type=str, nargs="*",
+                           help=f"Test name to run ('[class name]' or '[class name]#[test name]'), by default all tests are launched")
+    subparser.set_defaults(func=test_pel)
+
+    help_string = "Build the PIL deployment description json file from templated description json file."
+    subparser = subparsers.add_parser("build-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    destination_parameter_name = "templatedDeploymentDescriptionFile"
+    subparser.add_argument(dest=destination_parameter_name, metavar='TEMPLATED-DEPLOYMENT-JSON-FILE', type=str, nargs="?",
+                           help=f"Templated deployment description json file, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                           default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    destination_parameter_name = "componentConfigFolder"
+    subparser.add_argument("--component-config-folder", dest=destination_parameter_name, type=str,
+                           help=f"Component config file directory ('[gan project]/config'), by default '{default_component_config_folder_for_build_command}'. 'None' to avoid using the equinox.sh parameter check",
+                           default=default_component_config_folder_for_build_command)
+    destination_parameter_name = "pilDeploymentDescriptionFile"
+    subparser.add_argument("--deployment-description-result-file", dest=destination_parameter_name, metavar='DEPLOYMENT-JSON-FILE', type=str,
+                           help=f"PIL deployment description result json file, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                           default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    subparser.set_defaults(func=build_pil)
+
+    help_string = "Make a PIL deployment from description json file."
+    subparser = subparsers.add_parser("deploy-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    destination_parameter_name = "pilDeploymentDescriptionFile"
+    subparser.add_argument(dest=destination_parameter_name, metavar='DEPLOYMENT-JSON-FILE', type=str, nargs="?",
+                           help=f"PIL deployment description json file, by default {args_default_value_by_destination_parameter_name[destination_parameter_name]}",
+                           default=args_default_value_by_destination_parameter_name[destination_parameter_name])
+    subparser.set_defaults(func=deploy_pil)
+
+    help_string = "Start PIL deployment."
+    subparser = subparsers.add_parser("start-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.add_argument("--keep-the-intermediate-images", dest="keepTheIntermediateImages", action="store_true",
+                           help=f"Keep the intermediate images, by default False")
+    subparser.set_defaults(func=start_pil)
+
+    help_string = "Get running containers logs from PIL."
+    subparser = subparsers.add_parser("get-logs-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=get_logs_pil)
+
+    help_string = "Stop PIL deployment."
+    subparser = subparsers.add_parser("stop-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.add_argument("--keep-the-intermediate-images", dest="keepTheIntermediateImages", action="store_true",
+                           help=f"Keep the intermediate images, by default False")
+    subparser.add_argument("--do-not-get-logs", dest="doNotGetLogs", action="store_true",
+                           help=f"Do not get container logs before shutting down, by default False")
+    subparser.set_defaults(func=stop_pil)
+
+    help_string = "Save the basic docker images used by the PIL"
+    subparser = subparsers.add_parser("save-the-basic-docker-images-used-by-the-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=save_the_basic_docker_images_used_by_the_pil)
+
+    help_string = "Load the basic docker images used by the PIL"
+    subparser = subparsers.add_parser("load-the-basic-docker-images-used-by-the-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    destination_parameter_name = "dockerImagesTarGzFilePath"
+    subparser.add_argument(dest=destination_parameter_name, metavar='DOCKER-IMAGES-TAR-GZ-FILE', type=str, nargs=1,
+                           help=f"Docker images tar.gz file to load")
+    subparser.add_argument("--do-not-check-hash", dest="doNotCheckHash", action="store_true",
+                           help=f"Do not check the components hash used by the PIL, by default False")
+    subparser.set_defaults(func=load_the_basic_docker_images_used_by_the_pil)
+
+    help_string = "Remove the basic docker images used by the PIL"
+    subparser = subparsers.add_parser("remove-the-basic-docker-images-used-by-the-pil", parents=[common_parser],
+                                      description=help_string,
+                                      help=help_string)
+    subparser.set_defaults(func=remove_the_basic_docker_images_used_by_the_pil)
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
+    args = parser.parse_args()
+    # noinspection PyBroadException
+    try:
+        status_code = args.func(args)
+        sys.exit(status_code)
+    except Exception as args_function_exception:
+        print("Exception: ", traceback.format_exc())
+        print("-----------------------------------")
+        parser.print_help()
+        sys.exit(1)
